@@ -23,6 +23,8 @@ from custom_components.codex_voice.const import (
 )
 from custom_components.codex_voice.conversation import CodexVoiceConversationEntity
 
+from .helpers import tool_result
+
 
 def _make_entry(client: Any) -> CodexVoiceConfigEntry:
     """Create the minimal config-entry interface required by an entity."""
@@ -209,7 +211,7 @@ async def test_conversation_executes_home_assistant_tool(
         description="Turn on an exposed Home Assistant entity",
         parameters=vol.Schema({vol.Required("name"): str}),
     )
-    async_call_tool = AsyncMock(return_value={"success": True})
+    async_call_tool = AsyncMock(return_value=tool_result({"success": True}))
     llm_api = cast(
         "llm.APIInstance",
         SimpleNamespace(

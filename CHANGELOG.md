@@ -5,6 +5,17 @@ and releases use semantic versioning.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-10
+
+### Fixed
+
+- Convert Home Assistant 2026.10 Probatio tool schemas with the matching codec;
+  preserve legacy Voluptuous support and declare its dependency explicitly.
+- Normalize supported HA values with content-free path/type diagnostics and
+  strict rejection of unsupported values; retain typed ToolResult error flags.
+- Add normal Assist JSON regression tests and HA 2026.10 compatibility CI.
+
+
 ## [0.6.0] - 2026-08-10
 
 ### Added

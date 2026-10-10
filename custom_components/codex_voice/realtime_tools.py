@@ -51,7 +51,7 @@ from .const import (
     SUBENTRY_TYPE_CONVERSATION,
     SUPPORTED_LANGUAGES,
 )
-from .llm_tools import serialize_llm_tools
+from .llm_tools import serialize_llm_tools, tool_result_data
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -701,8 +701,10 @@ def _tool_error(code: str, message: str) -> dict[str, str]:
 
 def _validate_tool_result(result: object) -> dict[str, Any]:
     """Validate a tool result without leaking serialization errors."""
-    if not isinstance(result, dict):
-        raise HomeAssistantError("Home Assistant tool returned a non-object")
+    try:
+        result = tool_result_data(result)
+    except TypeError:
+        raise HomeAssistantError("Home Assistant tool returned a non-object") from None
     try:
         size = _serialized_size(result)
     except RealtimeToolBrokerProtocolError as err:

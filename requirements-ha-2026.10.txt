@@ -1,0 +1,15 @@
+# Supplemental HA compatibility environment. Core 2026.8 remains uv.lock's baseline.
+homeassistant==2026.10.0
+gazetteer-matcher==1.1.0
+hassil==3.12.1
+home-assistant-intents==2026.10.6
+voluptuous-openapi==0.4.1
+ha-ffmpeg==3.2.2
+mutagen==1.48.1
+wyoming==1.10.2
+aiortc>=1.15,<2
+av>=17.1,<18
+pytest>=8.4
+pytest-aiohttp>=1.1
+pytest-asyncio>=1.2
+pytest-homeassistant-custom-component>=0.13.300

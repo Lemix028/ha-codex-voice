@@ -41,6 +41,20 @@ jobs:
       - name: Test bridge
         run: uv run pytest -p no:homeassistant tests/bridge --cov=bridge --cov-report=term-missing
 
+  homeassistant-2026-10:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+      - name: Install HA 2026.10 compatibility dependencies
+        run: |
+          uv venv --python 3.14
+          uv pip install -r requirements-ha-2026.10.txt
+      - name: Test HA 2026.10 normal Assist and retained component features
+        run: uv run --no-project pytest tests/component
+
   bridge-compatibility:
     runs-on: ubuntu-latest
     steps:

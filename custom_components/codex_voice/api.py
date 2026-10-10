@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import struct
 from collections.abc import (
     AsyncGenerator,
@@ -39,6 +40,9 @@ from .const import (
     MAX_TOOL_CALLS,
     REQUEST_TIMEOUT,
 )
+from .json_serialization import SerializationFailure, normalize_json
+
+_LOGGER = logging.getLogger(__name__)
 
 _JSON_CONTENT_TYPES: Final = ("application/json", "text/json")
 _WAV_CONTENT_TYPES: Final = ("audio/wav", "audio/wave", "audio/x-wav")
@@ -119,8 +123,24 @@ class BridgeStreamingUnsupported(BridgeError):
 def _serialize_conversation_message(payload: JsonObject) -> str:
     """Serialize an outbound conversation event using Home Assistant's policy."""
     try:
-        return JSON_DUMP(payload)
+        return JSON_DUMP(normalize_conversation_value(payload))
     except TypeError, ValueError:
+        raise BridgeProtocolError(
+            "Conversation payload contains unsupported JSON values"
+        ) from None
+
+
+def normalize_conversation_value(value: Any, *, path: str = "$") -> Any:
+    """Diagnose unsupported data using only redacted path and Python type."""
+    try:
+        return normalize_json(value, path=path)
+    except SerializationFailure as err:
+        _LOGGER.warning(
+            "Conversation JSON serialization failed: path=%s type=%s reason=%s",
+            err.path,
+            err.python_type,
+            err.reason,
+        )
         raise BridgeProtocolError(
             "Conversation payload contains unsupported JSON values"
         ) from None

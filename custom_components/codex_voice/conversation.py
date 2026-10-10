@@ -34,7 +34,7 @@ from .const import (
     SUPPORTED_SERVICE_TIERS,
 )
 from .entity import CodexVoiceEntity
-from .llm_tools import serialize_llm_tools
+from .llm_tools import serialize_llm_tools, tool_result_data
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -171,7 +171,7 @@ class CodexVoiceConversationEntity(
             async for tool_result in chat_log.async_add_assistant_content(
                 assistant_content
             ):
-                result = dict(tool_result.tool_result)
+                result = _tool_result_data(tool_result)
                 if chat_log.delta_listener:
                     chat_log.delta_listener(chat_log, asdict(tool_result))
             return result
@@ -238,6 +238,13 @@ class CodexVoiceConversationEntity(
         return conversation.async_get_result_from_chat_log(user_input, chat_log)
 
 
+def _tool_result_data(content: conversation.ToolResultContent) -> dict[str, Any]:
+    """Use HA 2026.10's typed result while retaining HA 2026.8 compatibility."""
+    if (result := getattr(content, "result", None)) is not None:
+        return tool_result_data(result)
+    return dict(content.tool_result)
+
+
 def _serialize_chat_log(chat_log: conversation.ChatLog) -> list[dict[str, Any]]:
     """Convert Home Assistant chat content to bridge-safe JSON."""
     serialized: list[dict[str, Any]] = []
@@ -248,7 +255,7 @@ def _serialize_chat_log(chat_log: conversation.ChatLog) -> list[dict[str, Any]]:
                 {
                     "tool_call_id": item.tool_call_id,
                     "tool_name": item.tool_name,
-                    "result": item.tool_result,
+                    "result": _tool_result_data(item),
                 }
             )
         else:
