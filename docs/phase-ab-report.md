@@ -169,8 +169,10 @@ anschließend STT-Benchmark/Vokabular. Diese Features wurden nicht aktiviert.
 
 ## Lokale Installationsartefakte
 
-Unter `dist/` werden aus den Git-Commits drei Archive bereitgestellt:
+Unter `dist/` werden aus den Git-Commits vier Archive bereitgestellt:
 
+- `codex_voice.zip`: HACS-Release-Asset 0.7.0 mit den Integrationsdateien direkt
+  im ZIP-Hauptverzeichnis. Für einen GitHub-Release mit Tag `v0.7.0` auf `main`.
 - `computer-voice-json-hotfix-0.6.1.zip`: minimale Komponente für den vorhandenen
   0.6.0-Stand, keine Sitzungsumstellung und kein nötiges Bridge-Upgrade.
 - `computer-voice-component-0.7.0.zip`: kompletter A/B-Komponentenstand.
@@ -179,5 +181,6 @@ Unter `dist/` werden aus den Git-Commits drei Archive bereitgestellt:
 
 Die Archive enthalten nur Dateien aus den jeweiligen Git-Commits.
 `dist/SHA256SUMS.txt` und `dist/validation.json` halten Prüfsummen,
-Commit-Zuordnung und ausgeführte Testergebnisse fest. Dies sind lokale
-Artefakte; ein Push oder HACS-/GitHub-Release wurde nicht durchgeführt.
+Commit-Zuordnung und ausgeführte Testergebnisse fest. Der vollständige Stand
+ist auf `main` des Forks gepusht; die Archive werden lokal bereitgestellt.
+Ein GitHub-Release wurde noch nicht veröffentlicht.

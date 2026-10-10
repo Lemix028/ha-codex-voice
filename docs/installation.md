@@ -27,7 +27,7 @@ Dienstbenutzer, Code unter `/opt/computer-voice`, Login-State unter
 überwachen; die beigefügte systemd-Vorlage schlägt 1 CPU / 2 GB vor, ohne eine
 Leistungsgarantie. Dies ist eine eigene VM/LXC-Zuteilung, kein Teil der 8 GB HAOS.
 
-Die Bridge-Quellen aus dem lokalen Branch/Bridge-Archiv nach
+Die Bridge-Quellen aus dem Fork-Branch `main` oder dem Bridge-Archiv nach
 `/opt/computer-voice` übertragen. Code/venv für den Dienst nur lesbar halten.
 
 ```bash
@@ -74,9 +74,15 @@ neu starten. Dieser Stand erhält den bisherigen Sitzungsmodus und benötigt
 kein Bridge-Upgrade; siehe `json-serialization-fix.md`. Für A/B 0.7.0 gelten die
 nachfolgenden Schritte und die gemeinsame Aktualisierung der Bridge.
 
-Dieses Ergebnis liegt zunächst auf dem lokalen Branch `codex/computer-phase-ab`.
-Eine HACS-Veröffentlichung wird damit nicht behauptet. Für einen manuellen Test
-das Komponentenarchiv unter `/config` auspacken bzw. den Ordner
+Der vollständige Stand 0.7.0 liegt auf `main` in `Lemix028/ha-codex-voice`.
+Für GitHub Releases/HACS das Asset **`codex_voice.zip`** verwenden: Seine
+Integrationsdateien liegen direkt im ZIP-Hauptverzeichnis, entsprechend
+`hacs.json`. Beim manuellen Installieren dieses ZIP deshalb nach
+`/config/custom_components/codex_voice` auspacken.
+
+Das separat benannte `computer-voice-component-0.7.0.zip` enthält dagegen den
+Pfad `custom_components/codex_voice` und wird unter `/config` ausgepackt.
+Alternativ den Ordner
 `custom_components/codex_voice` übertragen. Danach HA neu starten und die
 Integration hinzufügen: LXC-Bridge-URL und **separater Bridge-Token**, kein HA-
 oder Codex-Login-Token. Bridge und Komponente gemeinsam aktualisieren.
