@@ -9,6 +9,7 @@ import wave
 from collections.abc import AsyncGenerator
 from datetime import UTC, date, datetime, time
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 from aiohttp import web
@@ -25,6 +26,66 @@ from custom_components.codex_voice.api import (
     BridgeStreamingUnsupported,
     BridgeToolCall,
 )
+
+
+async def test_duplicate_tool_call_is_never_executed_twice(
+    aiohttp_client: Any, socket_enabled: None
+) -> None:
+    """T14: replayed call IDs cannot execute another side effect."""
+
+    async def replay(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        await ws.receive_json()
+        call = {
+            "type": "tool_call",
+            "call_id": "same",
+            "name": "HassTurnOn",
+            "arguments": {},
+        }
+        await ws.send_json(call)
+        await ws.receive_json()
+        await ws.send_json(call)
+        await ws.close()
+        return ws
+
+    app = web.Application()
+    app.router.add_get("/v1/conversation", replay)
+    test_client = await aiohttp_client(app)
+    client = BridgeClient(test_client.session, str(test_client.make_url("")), "token")
+    tool = AsyncMock(return_value={"success": True})
+    with pytest.raises(BridgeProtocolError, match="Duplicate tool"):
+        await client.async_converse(
+            {}, async_handle_delta=AsyncMock(), async_handle_tool=tool
+        )
+    tool.assert_awaited_once()
+
+
+async def test_failed_terminal_is_not_reported_as_success(
+    aiohttp_client: Any, socket_enabled: None
+) -> None:
+    """Failed provider completion cannot produce a successful response."""
+
+    async def fail(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        await ws.receive_json()
+        await ws.send_json(
+            {"type": "done", "status": "failed", "text": "Unverified success"}
+        )
+        await ws.close()
+        return ws
+
+    app = web.Application()
+    app.router.add_get("/v1/conversation", fail)
+    test_client = await aiohttp_client(app)
+    client = BridgeClient(test_client.session, str(test_client.make_url("")), "token")
+    delta = AsyncMock()
+    with pytest.raises(BridgeProtocolError, match="did not complete"):
+        await client.async_converse(
+            {}, async_handle_delta=delta, async_handle_tool=AsyncMock()
+        )
+    delta.assert_not_awaited()
 
 
 def _wav_audio(

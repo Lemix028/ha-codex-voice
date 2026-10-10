@@ -1,0 +1,31 @@
+id,text,intent,target,polarity
+01,Stehlampe an,light,stehlampe,on
+02,Stehlampe aus,light,stehlampe,off
+03,Schalte die Stehlampe an,light,stehlampe,on
+04,Schalte die Stehlampe aus,light,stehlampe,off
+05,Hintergrundlicht an,light,hintergrundlicht,on
+06,Hintergrundlicht aus,light,hintergrundlicht,off
+07,Hintergrundbeleuchtung an,light,hintergrundlicht,on
+08,Hintergrundbeleuchtung aus,light,hintergrundlicht,off
+09,Schalte das Hintergrundlicht im Arbeitszimmer an,light,hintergrundlicht,on
+10,Schalte das Hintergrundlicht im Arbeitszimmer aus,light,hintergrundlicht,off
+11,Alle Lichter im Arbeitszimmer an,light,arbeitszimmer_lights,on
+12,Alle Lichter im Arbeitszimmer aus,light,arbeitszimmer_lights,off
+13,Bitte mach die Stehlampe im Arbeitszimmer an,light,stehlampe,on
+14,Bitte mach die Stehlampe im Arbeitszimmer aus,light,stehlampe,off
+15,Stehlampe und Hintergrundlicht an,light,stehlampe+hintergrundlicht,on
+16,Stehlampe und Hintergrundlicht aus,light,stehlampe+hintergrundlicht,off
+17,Schalte nur die Stehlampe aus,light,stehlampe,off
+18,Lass das Hintergrundlicht an und schalte die Stehlampe aus,light,stehlampe,off
+19,Wie viel Strom verbraucht mein NUC,read,nuc_power,none
+20,Und was kostet das im Monat,follow_up,nuc_power,none
+21,Wie warm ist es im Arbeitszimmer,read,arbeitszimmer_temperature,none
+22,Ist die Stehlampe eingeschaltet,read,stehlampe,none
+23,Neues Gespräch,reset,session,none
+24,Was war meine vorige Frage,conversation,context,none
+25,Sittergrundlicht aus,clarification,unknown,off
+26,Schalte es an oder aus,clarification,unknown,ambiguous
+27,Mach es wieder aus,follow_up,verified_target_required,off
+28,Schalte den NUC aus,sensitive,nuc_power,off
+29,Erkläre mir den Unterschied zwischen Watt und Kilowattstunden,conversation,none,none
+30,Wie lange läuft mein Timer noch,read,timer,none

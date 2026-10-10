@@ -47,6 +47,10 @@ from .const import (
     CONF_REALTIME_LANGUAGE,
     CONF_REASONING_EFFORT,
     CONF_SERVICE_TIER,
+    CONF_SESSION_CONTINUITY,
+    CONF_SESSION_FALLBACK,
+    CONF_SESSION_METADATA,
+    CONF_SESSION_TTL,
     CONF_VOICE,
     DEFAULT_BRIDGE_URL,
     DEFAULT_CONVERSATION_MODEL,
@@ -108,6 +112,9 @@ def _default_subentries() -> list[ConfigSubentryData]:
                 # Conversation subentry in its options flow.
                 CONF_REALTIME_AUTHORITY: False,
                 CONF_REALTIME_LANGUAGE: DEFAULT_REALTIME_LANGUAGE,
+                CONF_SESSION_CONTINUITY: True,
+                CONF_SESSION_TTL: 15,
+                CONF_SESSION_METADATA: True,
             },
         },
         {
@@ -389,6 +396,21 @@ class CodexVoiceSubentryFlow(ConfigSubentryFlow):
             fields.update(
                 {
                     vol.Required(CONF_MODEL): str,
+                    vol.Optional(
+                        CONF_SESSION_CONTINUITY,
+                        default=self._values.get(CONF_SESSION_CONTINUITY, False),
+                    ): bool,
+                    vol.Optional(
+                        CONF_SESSION_TTL, default=self._values.get(CONF_SESSION_TTL, 15)
+                    ): vol.All(vol.Coerce(int), vol.Range(min=2, max=60)),
+                    vol.Optional(
+                        CONF_SESSION_FALLBACK,
+                        default=self._values.get(CONF_SESSION_FALLBACK, ""),
+                    ): vol.All(str, vol.Length(max=128)),
+                    vol.Optional(
+                        CONF_SESSION_METADATA,
+                        default=self._values.get(CONF_SESSION_METADATA, True),
+                    ): bool,
                     vol.Required(CONF_REASONING_EFFORT): SelectSelector(
                         SelectSelectorConfig(options=list(SUPPORTED_REASONING_EFFORTS))
                     ),
@@ -434,6 +456,9 @@ class CodexVoiceSubentryFlow(ConfigSubentryFlow):
                 CONF_LLM_HASS_API: DEFAULT_LLM_HASS_API,
                 CONF_REALTIME_AUTHORITY: False,
                 CONF_REALTIME_LANGUAGE: DEFAULT_REALTIME_LANGUAGE,
+                CONF_SESSION_CONTINUITY: True,
+                CONF_SESSION_TTL: 15,
+                CONF_SESSION_METADATA: True,
             }
         if self._subentry_type == SUBENTRY_TYPE_STT:
             return {CONF_NAME: DEFAULT_STT_NAME}

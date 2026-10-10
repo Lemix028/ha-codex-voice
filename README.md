@@ -1,5 +1,27 @@
 # Codex Voice for Home Assistant
 
+## Computer fork — Echo Dot 2 / Deutsch
+
+Dieser Fork ergänzt Phase A/B des Computer-Anforderungskatalogs: inhaltlose
+Diagnose-Traces, gerätegebundene Kurzzeit-Sitzungen (2–60 Minuten), getrennte
+Benutzerkontexte, „neues Gespräch“, begrenzte Wiederherstellung nach Bridge-
+Neustart und Schutz vor Replay/konkurrierenden Aufrufen. Assist mit hassmic,
+Wyoming `small-int8` Deutsch und Piper bleibt der verwendete Pfad. Langzeitmemory
+ist nicht aktiviert; keine Echo-/Firmwareänderungen wurden vorgenommen.
+
+- [Audit und tatsächliche ID-Kette](docs/computer-audit.md)
+- [JSON-Hotfix für Home Assistant 2026.10](docs/json-serialization-fix.md)
+- [Installation, Konfiguration und Rollback](docs/installation.md)
+- [Meilensteine, Testnachweise und offene Hardware-Abnahme](docs/phase-ab-report.md)
+- [Datenschutz](docs/memory-and-privacy.md), [Fehlerdiagnose](docs/troubleshooting.md)
+- [Konkrete Folgeveränderungen für Tools, Memory und STT](docs/future-changes.md)
+
+Domain `codex_voice` ist parallel zur bestehenden OpenAI Codex Conversation
+(`codex_conversation`) installierbar. Bestehende Fork-Profile bleiben bis zur
+expliziten Aktivierung im bisherigen ID-Modus. Die ursprüngliche Dokumentation
+unterhalb betrifft teilweise ThirdReality und Spanisch; sie ist kein Auftrag
+zur Verwendung dieser Realtime-Strecke auf dem Echo.
+
 Codex Voice is an unofficial Home Assistant integration that exposes a
 Conversation agent, an experimental text-to-speech adapter, an experimental
 speech-to-text adapter, and an experimental direct realtime transport

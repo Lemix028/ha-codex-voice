@@ -1,5 +1,50 @@
 # Architecture
 
+## Computer fork: normale Assist-Pipeline und Sitzungsgrenze
+
+```mermaid
+flowchart LR
+  E[Echo Dot 2: Computer] --> H[HA Assist und Wyoming Whisper]
+  H --> I[HA lokale Intents / Sentence Trigger]
+  I -->|lokal erkannt| R[HA validiert / führt aus]
+  I -->|offene Anfrage| C[codex_voice Conversation]
+  C --> S[SessionManager: Gerät + bekannter HA-Benutzer]
+  S --> B[Authentifizierte Bridge / isolierter Codex-Thread]
+  B -->|deklarierter Tool-Aufruf| C
+  C -->|ausgewählte HA LLM API| R
+  R --> P[Piper / Echo-Ausgabe]
+  B -->|Antworttext| P
+  S --> M[HA Store: ausschließlich Metadaten]
+```
+
+HA-ChatLog und ChatSession bleiben HA-eigene Framework-Objekte. Der Fork ändert
+nicht die Satellite-Pipeline oder deren five-minute housekeeping. Er bindet
+stattdessen die Bridge-ID pro Conversation-Profil stabil an Device-ID, alternativ
+Satellite-ID. Bekannte authentifizierte HA-Benutzer werden zusätzlich getrennt.
+Ohne ID: nur ausdrücklich konfiguriertes einzelnes Fallback-Gerät oder isolierter
+Incoming-ID-Verlauf. Es gibt keine automatische Sprechererkennung.
+
+`conversation_sessions.py` owns TTL, eine Queue von höchstens zwei Aufrufen pro
+Owner, maximal 128 Sitzungen, RAM-Kontext (24 Nachrichten / 16.000 Zeichen),
+Reset und primitive Store-Snapshots. Laufende TTL verwendet monotone Zeit,
+persistierte Aktivität Wall-Clock-Zeit für Neustarts. `metrics.py` owns den
+inhaltlosen 64-Turn-Ring; `conversation.py` bindet beides an die HA-Schnittstelle.
+Die Bridge übernimmt TTL, periodische Thread-Bereinigung, authentifizierten
+Reset und einen begrenzten Replay-Cache (letzte 2048 Request-IDs pro Prozess).
+
+Neuer Thread: frühere erfolgreiche RAM-Turns einmal als untrusted Kontext
+einfügen. Reused Thread: keine erneute Historien-Injektion. HA-Neustart: nur
+Metadaten bleiben; Bridge-Thread kann noch existieren. Sind beide Kontexte weg,
+wird dies gesprochen. Es gibt keinen persistenten Gesprächsmitschnitt und
+keinen automatischen Wiederanlauf von Tool-Aktionen.
+
+Trust boundaries bleiben erhalten: Gerät übergibt keine Tools, HA entscheidet
+über LLM API/Exposure und validiert/führt Tools aus. Der Modellprozess erhält
+keine Shell, fremden Dateien, MCP/Plugins oder HA-Zugangstokens. Memory ist aus.
+Lokale HA-Intents laufen vor diesem Agenten und bleiben von dessen Bridge
+unabhängig. B05 benötigt später verifizierte Targets; reine lokale Antworttexte
+werden nicht als sichere Aktionsdaten übernommen. Siehe `future-changes.md`.
+
 ## Standard Assist pipeline
 
 ```text

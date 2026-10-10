@@ -1,0 +1,2 @@
+# The Piper runner verifies this asset byte-for-byte. Preserve LF on Windows.
+deploy/systemd/wyoming-piper-model.lock.json text eol=lf

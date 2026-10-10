@@ -41,6 +41,7 @@ from .const import (
     REQUEST_TIMEOUT,
 )
 from .json_serialization import SerializationFailure, normalize_json
+from .metrics import DiagnosticBuffer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -271,6 +272,7 @@ class BridgeClient:
         self.base_url = normalize_bridge_url(base_url)
         self._headers = {"Authorization": f"Bearer {access_token}"}
         self._handoff_release_tasks: set[asyncio.Task[None]] = set()
+        self.conversation_diagnostics = DiagnosticBuffer()
 
     def cancel_handoff_release_tasks(self) -> None:
         """Cancel best-effort cleanup jobs when the owning entry unloads."""
@@ -308,6 +310,7 @@ class BridgeClient:
         *,
         async_handle_delta: DeltaHandler,
         async_handle_tool: ToolHandler,
+        async_handle_started: Callable[[JsonObject], Awaitable[None]] | None = None,
     ) -> JsonObject:
         """Run one conversation turn over the bridge WebSocket."""
         start_message = _serialize_conversation_message({"type": "start", **start})
@@ -321,6 +324,8 @@ class BridgeClient:
                     await websocket.send_str(start_message)
                     tool_calls = 0
                     received_delta = False
+                    seen_tools: set[str] = set()
+                    received_started = False
                     async for message in websocket:
                         if message.type is WSMsgType.ERROR:
                             raise BridgeConnectionError(
@@ -333,6 +338,23 @@ class BridgeClient:
 
                         event = self._decode_event(message.data)
                         event_type = event.get("type")
+                        if event_type == "started":
+                            if received_started:
+                                raise BridgeProtocolError(
+                                    "Duplicate conversation start"
+                                )
+                            received_started = True
+                            if async_handle_started is not None:
+                                await async_handle_started(event)
+                            continue
+                        if (
+                            async_handle_started is not None
+                            and not received_started
+                            and event_type in {"delta", "tool_call", "done"}
+                        ):
+                            raise BridgeProtocolError(
+                                "Missing session context handshake"
+                            )
                         if event_type == "delta":
                             delta = event.get("delta", event.get("content", ""))
                             if not isinstance(delta, str):
@@ -351,6 +373,11 @@ class BridgeClient:
                                     "Conversation exceeded the tool-call limit"
                                 )
                             tool_call = self._decode_tool_call(event)
+                            if tool_call.call_id in seen_tools:
+                                raise BridgeProtocolError(
+                                    "Duplicate tool call; outcome must not be retried"
+                                )
+                            seen_tools.add(tool_call.call_id)
                             result = await async_handle_tool(tool_call)
                             await websocket.send_str(
                                 _serialize_conversation_message(
@@ -366,6 +393,10 @@ class BridgeClient:
                             continue
 
                         if event_type == "done":
+                            if event.get("status") not in {None, "completed"}:
+                                raise BridgeProtocolError(
+                                    "Conversation did not complete; tool outcome may be unknown"
+                                )
                             final_text = event.get("text", event.get("content"))
                             if (
                                 not received_delta
@@ -396,6 +427,12 @@ class BridgeClient:
             raise BridgeConnectionError("The conversation connection failed") from err
 
         raise BridgeConnectionError("The conversation connection closed unexpectedly")
+
+    async def async_reset_conversation(self, conversation_id: str) -> None:
+        """Retire one idle bridge thread; never replay a pending action."""
+        await self._async_post_json(
+            "/v1/conversation/reset", {"conversation_id": conversation_id}
+        )
 
     async def async_transcribe(
         self,

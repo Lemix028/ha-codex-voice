@@ -1638,6 +1638,11 @@ async def test_health_requires_bearer_and_reports_ready(
     assert response.status == 200
     assert await response.json() == {
         "status": "ok",
+        "conversation_sessions": {
+            "protocol": 1,
+            "thread_count": 0,
+            "content_storage": "isolated-runtime-only",
+        },
         "app_server": {
             "running": True,
             "initialized": True,
@@ -1796,6 +1801,92 @@ async def test_health_rejects_non_subscription_auth(aiohttp_client: Any) -> None
     assert payload["status"] == "unavailable"
     assert payload["app_server"]["auth_mode"] == "apikey"
     assert "stderr" not in payload["app_server"]
+
+
+@pytest.mark.asyncio
+async def test_computer_request_replay_is_rejected_before_another_turn(
+    aiohttp_client: Any, bridge_app: web.Application, fake_rpc: FakeRpc
+) -> None:
+    fake_rpc.emit_tool_once = False
+    client = await aiohttp_client(bridge_app)
+    start = {
+        "type": "start",
+        "conversation_id": "computer-test",
+        "request_id": "a" * 32,
+        "text": "synthetic question",
+        "session_idle_seconds": 120,
+    }
+    first = await client.ws_connect("/v1/conversation", headers=AUTH)
+    await first.send_json(start)
+    assert (await first.receive_json())["context_status"] == "new"
+    assert (await first.receive_json())["type"] == "delta"
+    assert (await first.receive_json())["type"] == "done"
+    await first.close()
+    second = await client.ws_connect("/v1/conversation", headers=AUTH)
+    await second.send_json(start)
+    assert (await second.receive_json())["type"] == "error"
+    await second.close()
+    assert sum(method == "turn/start" for method, _ in fake_rpc.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_computer_reset_retires_thread_and_is_idempotent(
+    aiohttp_client: Any, bridge_app: web.Application, fake_rpc: FakeRpc
+) -> None:
+    client = await aiohttp_client(bridge_app)
+    state = bridge_app[bridge_service.STATE_KEY]
+    await state.conversation_thread({"conversation_id": "computer-test"})
+    for _ in range(2):
+        response = await client.post(
+            "/v1/conversation/reset",
+            headers=AUTH,
+            json={"conversation_id": "computer-test"},
+        )
+        assert response.status == 200
+    assert sum(method == "thread/delete" for method, _ in fake_rpc.calls) == 1
+    response = await client.post(
+        "/v1/conversation/reset", json={"conversation_id": "computer-test"}
+    )
+    assert response.status == 401
+
+
+@pytest.mark.asyncio
+async def test_computer_restored_binding_reports_lost_or_recovered_context(
+    aiohttp_client: Any, bridge_app: web.Application, fake_rpc: FakeRpc
+) -> None:
+    fake_rpc.emit_tool_once = False
+    client = await aiohttp_client(bridge_app)
+    for index, messages in enumerate(
+        [
+            [],
+            [
+                {"role": "user", "content": "NUC synthetic question"},
+                {"role": "assistant", "content": "synthetic answer"},
+            ],
+        ]
+    ):
+        ws = await client.ws_connect("/v1/conversation", headers=AUTH)
+        await ws.send_json(
+            {
+                "type": "start",
+                "conversation_id": f"restored-{index}",
+                "session_restored": True,
+                "text": "follow-up",
+                "messages": messages,
+            }
+        )
+        assert (await ws.receive_json())["context_status"] == (
+            "lost" if index == 0 else "recovered"
+        )
+        assert (await ws.receive_json())["type"] == "delta"
+        assert (await ws.receive_json())["type"] == "done"
+        await ws.close()
+    turns = [params for method, params in fake_rpc.calls if method == "turn/start"]
+    assert "home_assistant_history" not in turns[0].get("additionalContext", {})
+    assert (
+        "NUC synthetic question"
+        in turns[1]["additionalContext"]["home_assistant_history"]["value"]
+    )
 
 
 @pytest.mark.asyncio

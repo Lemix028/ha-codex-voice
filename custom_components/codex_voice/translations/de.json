@@ -1,0 +1,167 @@
+{
+  "title": "Codex Voice",
+  "config": {
+    "abort": {
+      "already_configured": "This Codex Voice bridge is already configured.",
+      "reauth_successful": "Reauthentication was successful.",
+      "reconfigure_successful": "The bridge configuration was updated."
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the Codex Voice bridge.",
+      "invalid_auth": "The bridge rejected the access token.",
+      "unknown": "Unexpected error."
+    },
+    "step": {
+      "user": {
+        "title": "Connect to Codex Voice",
+        "description": "Connect Home Assistant to the local, subscription-backed Codex Voice bridge.",
+        "data": {
+          "access_token": "Bridge access token",
+          "bridge_url": "Bridge URL"
+        },
+        "data_description": {
+          "access_token": "The token configured on the local bridge. This is not your ChatGPT OAuth token.",
+          "bridge_url": "The HTTP URL Home Assistant uses to reach the bridge."
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Codex Voice",
+        "data": {
+          "access_token": "Bridge access token",
+          "bridge_url": "Bridge URL"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Authenticate with the bridge again",
+        "description": "Enter the current access token for the local Codex Voice bridge.",
+        "data": {
+          "access_token": "Bridge access token"
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "conversation": {
+      "entry_type": "Conversation agent",
+      "initiate_flow": {
+        "user": "Add conversation agent",
+        "reconfigure": "Reconfigure conversation agent"
+      },
+      "abort": {
+        "reconfigure_successful": "The conversation agent was updated."
+      },
+      "error": {
+        "realtime_authority_already_configured": "Another conversation agent already provides realtime Home Assistant tools. Disable it there before enabling this agent."
+      },
+      "step": {
+        "init": {
+          "title": "Computer – Gesprächsagent",
+          "data": {
+            "llm_hass_api": "Home Assistant steuern",
+            "model": "Modell",
+            "name": "Name",
+            "prompt": "Anweisungen",
+            "realtime_authority": "HA-Tools für experimentelle Realtime-Sprache bereitstellen",
+            "realtime_language": "Sprache für experimentelle Realtime-Sprache",
+            "reasoning_effort": "Denkaufwand",
+            "service_tier": "Service-Stufe",
+            "session_continuity": "Gespräche über Wakewords fortsetzen",
+            "session_idle_minutes": "Leerlaufdauer der Sitzung (2–60 Minuten)",
+            "session_fallback": "Explizite Zuordnung für einen Satelliten ohne Geräte-ID",
+            "session_metadata": "Sitzungsmetadaten speichern (ohne Gesprächsinhalt)"
+          },
+          "data_description": {
+            "llm_hass_api": "Nur die hier ausgewählten HA-LLM-APIs und deren freigegebene Entitäten verwenden.",
+            "prompt": "Anweisungen vor dem Gespräch. Templates werden unterstützt.",
+            "realtime_authority": "Für den Echo-Assist-Pfad ausgeschaltet lassen. Genau ein Profil darf experimentelle Realtime-Tools anbieten.",
+            "realtime_language": "Sprache für den separaten experimentellen Realtime-Pfad.",
+            "reasoning_effort": "Höherer Denkaufwand kann die Antwortzeit erhöhen.",
+            "service_tier": "Priority kann schneller sein und mehr Abo-Kontingent verbrauchen als standard.",
+            "session_continuity": "Sitzungen werden nach Gerät und bekanntem HA-Benutzer getrennt. Bestehende Profile bleiben bis zur Aktivierung im bisherigen ID-Modus.",
+            "session_idle_minutes": "Zeit seit dem letzten abgeschlossenen Aufruf. Standard: 15 Minuten.",
+            "session_fallback": "Normalerweise leer lassen. Nur mit einem eigenen Profil für genau einen Satelliten ohne sichere ID verwenden. Nicht identifizierte Aufrufer dieses Profils teilen dann bewusst die Zuordnung.",
+            "session_metadata": "Nur gehashte Zuordnungen, zufällige Sitzungs-IDs und Zeitstempel. Text bleibt im begrenzten RAM. Ein Kontextverlust wird offen mitgeteilt."
+          }
+        }
+      }
+    },
+    "stt": {
+      "entry_type": "Experimental speech-to-text",
+      "initiate_flow": {
+        "user": "Add experimental Codex speech-to-text",
+        "reconfigure": "Reconfigure experimental Codex speech-to-text"
+      },
+      "abort": {
+        "reconfigure_successful": "The speech-to-text provider was updated."
+      },
+      "step": {
+        "init": {
+          "title": "Experimental Codex speech-to-text",
+          "description": "This diagnostic provider repurposes Codex realtime conversation and may time out without a transcript. For a reliable Assist pipeline, use Home Assistant's Wyoming integration with local Whisper instead.",
+          "data": {
+            "name": "Name",
+            "prompt": "Transcription hint"
+          },
+          "data_description": {
+            "prompt": "Optional vocabulary or context that can improve transcription."
+          }
+        }
+      }
+    },
+    "tts": {
+      "entry_type": "Text-to-speech",
+      "initiate_flow": {
+        "user": "Add text-to-speech provider",
+        "reconfigure": "Reconfigure text-to-speech provider"
+      },
+      "abort": {
+        "reconfigure_successful": "The text-to-speech provider was updated."
+      },
+      "step": {
+        "init": {
+          "title": "Text-to-speech provider",
+          "description": "Speech generation uses Codex realtime conversation as a best-effort compatibility adapter. It can paraphrase or expand text and is not suitable where exact wording is required.",
+          "data": {
+            "instructions": "Voice instructions",
+            "name": "Name",
+            "voice": "Voice"
+          },
+          "data_description": {
+            "instructions": "Optional instructions for tone, pacing, accent, or emotion."
+          }
+        }
+      }
+    }
+  },
+  "entity": {
+    "conversation": {
+      "conversation": {
+        "name": "Conversation"
+      }
+    },
+    "stt": {
+      "stt": {
+        "name": "Experimental speech-to-text"
+      }
+    },
+    "tts": {
+      "tts": {
+        "name": "Text-to-speech"
+      }
+    }
+  },
+  "exceptions": {
+    "authentication_required": {
+      "message": "Codex Voice needs to be authenticated again."
+    },
+    "synthesis_failed": {
+      "message": "Codex Voice could not synthesize speech."
+    },
+    "unsupported_audio_format": {
+      "message": "The bridge returned the unsupported audio format {audio_format}."
+    },
+    "unsupported_home_assistant_version": {
+      "message": "Codex Voice requires Home Assistant {minimum_version} or newer."
+    }
+  }
+}

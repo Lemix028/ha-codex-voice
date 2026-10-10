@@ -5,6 +5,32 @@ and releases use semantic versioning.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-10
+
+### Added
+
+- Computer Assist fork: per-device and known-user sessions, configurable 2–60
+  minute idle lifetime, bounded queues and RAM continuity context, explicit reset.
+- Optional HA Store metadata checkpoints, truthful lost/partial context notice,
+  periodic TTL cleanup and authenticated bridge reset endpoint.
+- Content-free Conversation diagnostic ring and read-only HA pipeline trace exporter.
+- German/English session settings, rollout/rollback/privacy documentation and
+  a concrete Tools/Memory/STT follow-up design with 30 synthetic German sentences.
+
+### Fixed
+
+- Reject duplicate Conversation request IDs, duplicate tool IDs and failed
+  terminal responses; cap HA tool execution and never automatically retry an
+  uncertain side effect. Retire cancelled/failed session bindings.
+- Preserve the byte-verified Piper lock asset's LF endings on Windows checkouts.
+
+### Compatibility and privacy
+
+- Keep the HA Assist/Whisper/Piper path and HA tool authority. Existing profiles
+  retain ID-only behavior until continuity is enabled. No ConfigEntry migration.
+- No long-term memory, added transcript/audio store, firmware change
+  or production deployment. Hardware acceptance gates remain open; see report.
+
 ## [0.6.1] - 2026-10-10
 
 ### Fixed
@@ -14,7 +40,6 @@ and releases use semantic versioning.
 - Normalize supported HA values with content-free path/type diagnostics and
   strict rejection of unsupported values; retain typed ToolResult error flags.
 - Add normal Assist JSON regression tests and HA 2026.10 compatibility CI.
-
 
 ## [0.6.0] - 2026-08-10
 

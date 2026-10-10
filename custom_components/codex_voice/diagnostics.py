@@ -6,11 +6,13 @@ from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.const import CONF_PROMPT
+from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant
 
 from . import CodexVoiceConfigEntry
 from .api import BridgeError
 from .const import CONF_ACCESS_TOKEN, CONF_INSTRUCTIONS
+from .metrics import DiagnosticBuffer
 
 _TO_REDACT = {
     CONF_ACCESS_TOKEN,
@@ -23,6 +25,14 @@ _TO_REDACT = {
     "email",
     "refresh_token",
     "token",
+    "session_fallback",
+    "text",
+    "transcript",
+    "audio",
+    "sdp",
+    "messages",
+    "tool_args",
+    "tool_result",
 }
 
 
@@ -36,11 +46,23 @@ async def async_get_config_entry_diagnostics(
     except BridgeError as err:
         health = {"error": type(err).__name__}
 
+    diagnostics = getattr(entry.runtime_data, "conversation_diagnostics", None)
     return {
         "config_entry": async_redact_data(entry.as_dict(), _TO_REDACT),
         "bridge": _redact_nested(health),
         "recommended_stt_architecture": "home-assistant-wyoming-local",
         "codex_stt_adapter": "experimental-conversational-best-effort",
+        "conversation_traces": diagnostics.export()
+        if isinstance(diagnostics, DiagnosticBuffer)
+        else [],
+        "timing_scope": "conversation-api-boundary; null means not measurable here",
+        "software": {"home_assistant": HA_VERSION},
+        "hardware": {
+            "haos_vm_ram_mb": None,
+            "haos_vm_cpu_count": None,
+            "echo_firmware": None,
+            "wyoming_stt_version": None,
+        },
     }
 
 

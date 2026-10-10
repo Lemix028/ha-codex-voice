@@ -1,5 +1,16 @@
 # Codex Voice bridge
 
+Computer fork v0.7.0 adds optional Conversation `request_id`,
+`session_idle_seconds` (120–3600), `session_restored` and `history_complete` start
+fields. `started.context_status` is `new`, `reused`, `recovered`, `partial` or
+`lost`. New session-enabled components require this handshake. Legacy ID clients
+remain compatible. `POST /v1/conversation/reset` takes a conversation ID and
+retires only an idle thread; active calls return busy. Same primary bearer
+authentication applies. Request-ID replay protection covers the last 2048 claims
+in this process, without guaranteeing exactly-once across process loss.
+HA never automatically retries a tool or a conversation after an unknown outcome.
+See [Computer installation and rollout](../docs/installation.md).
+
 This process exposes a small bearer-authenticated HTTP/WebSocket API to the
 Home Assistant custom component and owns a local `codex app-server` child. The
 child uses the machine's existing file-backed Codex/ChatGPT login through a
