@@ -454,6 +454,7 @@ async def test_lost_context_is_announced_after_metadata_only_restore(
 async def test_quota_reports_german_message_without_transport_confusion(
     hass: HomeAssistant,
 ) -> None:
+    """Report exhausted quota in German rather than claiming bridge downtime."""
     client = SimpleNamespace(
         async_converse=AsyncMock(side_effect=BridgeQuotaError("limit"))
     )
