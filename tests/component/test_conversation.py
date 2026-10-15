@@ -16,7 +16,7 @@ from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import llm
 
 from custom_components.codex_voice import CodexVoiceConfigEntry
-from custom_components.codex_voice.api import BridgeToolCall
+from custom_components.codex_voice.api import BridgeQuotaError, BridgeToolCall
 from custom_components.codex_voice.const import (
     CONF_MODEL,
     CONF_REASONING_EFFORT,
@@ -449,3 +449,22 @@ async def test_lost_context_is_announced_after_metadata_only_restore(
     assert (
         "Bitte nenne nötige Details erneut" in result.response.speech["plain"]["speech"]
     )
+
+
+async def test_quota_reports_german_message_without_transport_confusion(
+    hass: HomeAssistant,
+) -> None:
+    client = SimpleNamespace(
+        async_converse=AsyncMock(side_effect=BridgeQuotaError("limit"))
+    )
+    entity = CodexVoiceConversationEntity(_make_entry(client), _make_subentry())
+    entity.entity_id = "conversation.codex_voice"
+    entity.hass = hass
+    chat_log = _make_chat_log(hass)
+    user_input = replace(_make_input(), language="de-DE")
+    with patch.object(chat_log, "async_provide_llm_data", new_callable=AsyncMock):
+        result = await entity._async_handle_message(user_input, chat_log)
+    assert result.response.speech["plain"]["speech"] == (
+        "Dein Codex-Nutzungslimit ist erreicht. Bitte versuche es später erneut."
+    )
+    assert entity._diagnostics.export()[-1]["error"] == "quota_exhausted"
