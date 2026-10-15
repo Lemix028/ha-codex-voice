@@ -43,6 +43,7 @@ from .audio import (
 )
 from .config import BridgeConfig
 from .conversation_context import conversation_history
+from .conversation_errors import bridge_error, provider_error
 from .conversation_policy import SINGLE_TURN_FIRST, adaptive_request, registered_tools
 from .errors import (
     AppServerExited,
@@ -3798,7 +3799,7 @@ async def _conversation(request: web.Request) -> web.WebSocketResponse:
             {"type": "error", "code": "authentication_required", "error": str(exc)},
         )
     except (BridgeError, ValueError) as exc:
-        await _safe_ws_json(websocket, {"type": "error", "error": str(exc)})
+        await _safe_ws_json(websocket, bridge_error(exc))
     finally:
         try:
             if not websocket.closed:
@@ -3901,9 +3902,11 @@ async def _run_conversation_socket(  # noqa: C901 - protocol state machine
                 return
             waiter.set_result(dict(params))
         elif method in {"error", "thread/realtime/error"}:
+            if params.get("willRetry") is True:
+                return
             waiter = turn_waiters.get(turn_id)
             if waiter is not None and not waiter.done():
-                waiter.set_exception(ProtocolError(str(params.get("message", method))))
+                waiter.set_exception(ProtocolError(provider_error(params)["error"]))
 
     async def run_turn(text: str) -> None:
         try:
@@ -4024,7 +4027,15 @@ async def _run_conversation_socket(  # noqa: C901 - protocol state machine
                 turn_state.pending_owner = None
             state.touch_conversation(start_payload.get("conversation_id"), thread_id)
             turn = completion.get("turn")
-            await send({"type": "done", "turn": turn, "status": _turn_status(turn)})
+            if _turn_status(turn) == "failed":
+                await send(provider_error(completion))
+                await state.retire_conversation(
+                    start_payload.get("conversation_id"), thread_id, turn_state
+                )
+                stop.set()
+                await websocket.close()
+            else:
+                await send({"type": "done", "turn": turn, "status": _turn_status(turn)})
         except TimeoutError:
             await state.retire_conversation(
                 start_payload.get("conversation_id"), thread_id, turn_state
@@ -4036,7 +4047,7 @@ async def _run_conversation_socket(  # noqa: C901 - protocol state machine
             await state.retire_conversation(
                 start_payload.get("conversation_id"), thread_id, turn_state
             )
-            await send({"type": "error", "error": str(exc)})
+            await send(bridge_error(exc))
             stop.set()
             await websocket.close()
         finally:
@@ -4089,10 +4100,15 @@ async def _run_conversation_socket(  # noqa: C901 - protocol state machine
                 continue
             turn_id = event_turn_id(params)
             if method in {"error", "thread/realtime/error"} and turn_id is None:
+                if params.get("willRetry") is True:
+                    continue
                 await state.retire_conversation(
                     start_payload.get("conversation_id"), thread_id, turn_state
                 )
-                raise ProtocolError(str(params.get("message", method)))
+                await send(provider_error(params))
+                stop.set()
+                await websocket.close()
+                return
             if turn_id is None:
                 continue
             async with turn_event_lock:
