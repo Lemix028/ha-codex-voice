@@ -43,6 +43,7 @@ from .audio import (
 )
 from .config import BridgeConfig
 from .conversation_context import conversation_history
+from .conversation_policy import SINGLE_TURN_FIRST, adaptive_request, registered_tools
 from .errors import (
     AppServerExited,
     AuthenticationRequired,
@@ -790,6 +791,7 @@ class BridgeState:
         self.peer_factory = peer_factory
         self.home_assistant_tools = HomeAssistantToolBroker()
         self._conversations: OrderedDict[str, _ConversationEntry] = OrderedDict()
+        self._fresh_threads: set[str] = set()
         self._conversation_lock = asyncio.Lock()
         self._conversation_requests: OrderedDict[str, None] = OrderedDict()
         self._speech_state_lock = asyncio.Lock()
@@ -1113,12 +1115,31 @@ class BridgeState:
         thread_payload = dict(payload)
         thread_payload.pop("instructions", None)
         thread_payload.pop("developer_instructions", None)
+        adaptive = adaptive_request(payload)
         service_tier: str | None = None
         if "service_tier" in payload:
             service_tier_value = payload.get("service_tier")
             _app_server_service_tier(service_tier_value)
             assert isinstance(service_tier_value, str)
             service_tier = service_tier_value
+        if adaptive:
+            self._claim_conversation_request(payload)
+            async with self._conversation_lock:
+                if (
+                    len(self._conversations) + len(self._fresh_threads)
+                    >= MAX_CONVERSATIONS
+                ):
+                    raise BridgeBusyError("Conversation capacity is busy")
+                thread_id = await self.start_thread(
+                    thread_payload, service_tier=service_tier
+                )
+                self._fresh_threads.add(thread_id)
+            return (
+                thread_id,
+                False,
+                True,
+                _ConversationTurnState(),
+            )
         conversation_id = payload.get("conversation_id")
         if not isinstance(conversation_id, str) or not conversation_id:
             return (
@@ -1138,19 +1159,7 @@ class BridgeState:
             or not 120 <= idle_seconds <= 3600
         ):
             raise ProtocolError("session_idle_seconds must be 120â€“3600")
-        request_id = payload.get("request_id")
-        if request_id is not None:
-            if (
-                not isinstance(request_id, str)
-                or len(request_id) != 32
-                or any(char not in "0123456789abcdef" for char in request_id)
-            ):
-                raise ProtocolError("Invalid conversation request ID")
-            if request_id in self._conversation_requests:
-                raise ProtocolError("Duplicate conversation request; do not retry")
-            self._conversation_requests[request_id] = None
-            if len(self._conversation_requests) > 2048:
-                self._conversation_requests.popitem(last=False)
+        self._claim_conversation_request(payload)
         fingerprint = json.dumps(tools, sort_keys=True, separators=(",", ":"))
         async with self._conversation_lock:
             await self._prune_conversations()
@@ -1188,6 +1197,31 @@ class BridgeState:
             )
             self._conversations[conversation_id] = entry
             return thread_id, True, True, entry.turn_state
+
+    def _claim_conversation_request(self, payload: Mapping[str, Any]) -> None:
+        """Reject retries before any provider work, for legacy and fresh turns."""
+        request_id = payload.get("request_id")
+        if request_id is None:
+            return
+        if (
+            not isinstance(request_id, str)
+            or len(request_id) != 32
+            or any(char not in "0123456789abcdef" for char in request_id)
+        ):
+            raise ProtocolError("Invalid conversation request ID")
+        if request_id in self._conversation_requests:
+            raise ProtocolError("Duplicate conversation request; do not retry")
+        self._conversation_requests[request_id] = None
+        if len(self._conversation_requests) > 2048:
+            self._conversation_requests.popitem(last=False)
+
+    async def release_fresh_thread(self, thread_id: str) -> None:
+        """Release exactly once, including a failed context handshake."""
+        async with self._conversation_lock:
+            if thread_id not in self._fresh_threads:
+                return
+            self._fresh_threads.remove(thread_id)
+        await _dispose_thread(self.rpc, thread_id)
 
     async def retire_conversation(
         self,
@@ -1286,6 +1320,8 @@ class BridgeState:
                 entry.turn_state.retired = True
                 await _dispose_thread(self.rpc, entry.thread_id)
             self._conversations.clear()
+            for thread_id in tuple(self._fresh_threads):
+                await self.release_fresh_thread(thread_id)
         finally:
             try:
                 await self.rpc.close()
@@ -3704,6 +3740,8 @@ async def _conversation(request: web.Request) -> web.WebSocketResponse:
     websocket = web.WebSocketResponse(heartbeat=30, max_msg_size=2 * 1024 * 1024)
     await websocket.prepare(request)
     _track_websocket(request, websocket)
+    thread_id: str | None = None
+    first: dict[str, Any] = {}
     try:
         first = await _receive_ws_json(websocket, timeout=30)
         if first.get("type") != "start":
@@ -3721,6 +3759,11 @@ async def _conversation(request: web.Request) -> web.WebSocketResponse:
                 "type": "started",
                 "conversation_id": conversation_id,
                 "thread_id": thread_id,
+                **(
+                    {"context_policy": SINGLE_TURN_FIRST}
+                    if first.get("context_policy") == SINGLE_TURN_FIRST
+                    else {}
+                ),
                 "context_status": (
                     "reused"
                     if not seed_history
@@ -3762,6 +3805,11 @@ async def _conversation(request: web.Request) -> web.WebSocketResponse:
                 await websocket.close()
         finally:
             _untrack_websocket(request, websocket)
+            if (
+                thread_id is not None
+                and first.get("context_policy") == SINGLE_TURN_FIRST
+            ):
+                await state.release_fresh_thread(thread_id)
     return websocket
 
 
@@ -3786,6 +3834,13 @@ async def _run_conversation_socket(  # noqa: C901 - protocol state machine
     active_turn: dict[str, str | None] = {"id": None}
     stop = asyncio.Event()
     socket_owner = object()
+    adaptive = start_payload.get("context_policy") == SINGLE_TURN_FIRST
+    allowed_tools = (
+        registered_tools(normalize_dynamic_tools(start_payload.get("tools")))
+        if adaptive
+        else set()
+    )
+    claimed_tool_ids: set[str] = set()
 
     async def send(value: Mapping[str, Any]) -> None:
         async with send_lock:
@@ -3812,6 +3867,19 @@ async def _run_conversation_socket(  # noqa: C901 - protocol state machine
             await send({"type": "delta", "delta": str(params.get("delta", ""))})
         elif method == "item/tool/call" and "id" in event:
             call_id = str(params.get("callId", event["id"]))
+            if adaptive:
+                if not isinstance(params.get("tool"), str) or (
+                    params.get("namespace") is not None
+                    and not isinstance(params.get("namespace"), str)
+                ):
+                    raise ProtocolError("Invalid provider tool identity")
+                if (params.get("namespace"), params.get("tool")) not in allowed_tools:
+                    raise ProtocolError("Provider requested an unregistered tool")
+                if call_id in claimed_tool_ids or len(claimed_tool_ids) >= 10:
+                    raise ProtocolError(
+                        "Repeated or excess provider tool call; do not retry"
+                    )
+                claimed_tool_ids.add(call_id)
             tool_requests[call_id] = event["id"]
             await send(
                 {
@@ -4047,6 +4115,8 @@ async def _run_conversation_socket(  # noqa: C901 - protocol state machine
             message = await _receive_ws_json(websocket)
             message_type = message.get("type")
             if message_type in {"message", "text"}:
+                if adaptive:
+                    raise ProtocolError("Single-turn socket cannot start another turn")
                 text = message.get("text")
                 if not isinstance(text, str) or not text.strip():
                     await send(
@@ -4106,7 +4176,10 @@ async def _run_conversation_socket(  # noqa: C901 - protocol state machine
         if turn_state.pending_owner is socket_owner:
             turn_state.pending_owner = None
         if not persistent:
-            await _dispose_thread(state.rpc, thread_id)
+            if adaptive:
+                await state.release_fresh_thread(thread_id)
+            else:
+                await _dispose_thread(state.rpc, thread_id)
 
 
 async def _home_assistant_tools(request: web.Request) -> web.WebSocketResponse:

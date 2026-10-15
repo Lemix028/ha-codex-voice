@@ -10,6 +10,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta
 from time import monotonic
 from typing import Any, Literal, override
+from uuid import uuid4
 
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigSubentry
@@ -28,9 +29,11 @@ from .api import (
     BridgeProtocolError,
     BridgeQuotaError,
     BridgeToolCall,
+    DeltaHandler,
     ToolHandler,
 )
 from .const import (
+    CONF_CONTEXT_MODE,
     CONF_MODEL,
     CONF_REASONING_EFFORT,
     CONF_SERVICE_TIER,
@@ -46,6 +49,14 @@ from .const import (
     SUPPORTED_REASONING_EFFORTS,
     SUPPORTED_SERVICE_TIERS,
 )
+from .context_policy import (
+    CONTEXT_ADAPTIVE,
+    CONTEXT_LEGACY,
+    ContextDecision,
+    PendingQuestion,
+    pending_question,
+    select_context,
+)
 from .conversation_sessions import (
     Session,
     SessionBusyError,
@@ -54,7 +65,15 @@ from .conversation_sessions import (
 )
 from .entity import CodexVoiceEntity
 from .llm_tools import serialize_llm_tools, tool_result_data
+from .local_intents import LocalResult, async_try_local_intent
 from .metrics import DiagnosticBuffer, TurnTrace
+from .tool_policy import (
+    ADAPTIVE_INSTRUCTIONS,
+    ToolAuthorizationRequired,
+    ToolSelection,
+    authorize_tool,
+    select_tools,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,6 +117,12 @@ class CodexVoiceConversationEntity(
             diagnostics = DiagnosticBuffer()
             entry.runtime_data.conversation_diagnostics = diagnostics
         self._diagnostics: DiagnosticBuffer = diagnostics
+        self._adaptive = (
+            subentry.data.get(CONF_CONTEXT_MODE, CONTEXT_LEGACY) == CONTEXT_ADAPTIVE
+        )
+        self._current_trace: ContextVar[TurnTrace | None] = ContextVar(
+            "computer_turn_trace", default=None
+        )
         self._sessions = SessionManager(
             ttl_minutes=subentry.data.get(CONF_SESSION_TTL, 15),
             fallback=subentry.data.get(CONF_SESSION_FALLBACK, ""),
@@ -122,7 +147,8 @@ class CodexVoiceConversationEntity(
         """Register this entity as a conversation agent."""
         await super().async_added_to_hass()
         if (
-            self.subentry.data.get(CONF_SESSION_METADATA) is False
+            self._adaptive
+            or self.subentry.data.get(CONF_SESSION_METADATA) is False
             or self.subentry.data.get(CONF_SESSION_CONTINUITY) is False
         ):
             await Store(
@@ -130,9 +156,11 @@ class CodexVoiceConversationEntity(
                 1,
                 f"{DOMAIN}.sessions.{self.entry.entry_id}.{self.subentry.subentry_id}",
             ).async_remove()
-        if self.subentry.data.get(
-            CONF_SESSION_CONTINUITY, False
-        ) and self.subentry.data.get(CONF_SESSION_METADATA, True):
+        if (
+            not self._adaptive
+            and self.subentry.data.get(CONF_SESSION_CONTINUITY, False)
+            and self.subentry.data.get(CONF_SESSION_METADATA, True)
+        ):
             self._session_store = Store(
                 self.hass,
                 1,
@@ -171,13 +199,28 @@ class CodexVoiceConversationEntity(
         self, user_input: conversation.ConversationInput
     ) -> conversation.ConversationResult:
         """Bind a bridge session without replacing Home Assistant's ChatLog."""
-        if not self.subentry.data.get(CONF_SESSION_CONTINUITY, False):
+        trace = TurnTrace(incoming_id_present=bool(user_input.conversation_id))
+        token = self._current_trace.set(trace)
+        try:
+            return await self._async_process_bound(user_input)
+        finally:
+            self._current_trace.reset(token)
+            self._diagnostics.finish(trace)
+
+    async def _async_process_bound(
+        self, user_input: conversation.ConversationInput
+    ) -> conversation.ConversationResult:
+        """Retain legacy binding while adaptive profiles also bind UI users."""
+        if not self._adaptive and not self.subentry.data.get(
+            CONF_SESSION_CONTINUITY, False
+        ):
             return await super().async_process(user_input)
         owner, source = self._sessions.identity(
             device_id=user_input.device_id,
             satellite_id=user_input.satellite_id,
             user_id=user_input.context.user_id,
             incoming_id=user_input.conversation_id,
+            bind_user=self._adaptive,
         )
         try:
             async with self._sessions.lease(owner) as session:
@@ -197,6 +240,8 @@ class CodexVoiceConversationEntity(
                                 "Session metadata checkpoint failed; context may be lost after restart"
                             )
         except SessionBusyError, TimeoutError:
+            if trace := self._current_trace.get():
+                trace.path, trace.error = "error", "busy"
             response = intent.IntentResponse(language=user_input.language)
             response.async_set_error(
                 intent.IntentResponseErrorCode.UNKNOWN,
@@ -215,7 +260,9 @@ class CodexVoiceConversationEntity(
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
         """Process a message and run requested Home Assistant tools."""
-        trace = TurnTrace(incoming_id_present=bool(user_input.conversation_id))
+        trace = self._current_trace.get() or TurnTrace(
+            incoming_id_present=bool(user_input.conversation_id)
+        )
         trace.mark("conversation_received")
         active = self._active_session.get()
         session = active[0] if active else None
@@ -230,11 +277,12 @@ class CodexVoiceConversationEntity(
         if session is not None and is_reset_command(user_input.text):
             previous_id = session.conversation_id
             self._sessions.reset(session)
-            try:
-                await self.entry.runtime_data.async_reset_conversation(previous_id)
-            except BridgeError:
-                # Binding is already rotated; the old remote cache expires.
-                trace.error = "remote_reset_unavailable"
+            if not self._adaptive:
+                try:
+                    await self.entry.runtime_data.async_reset_conversation(previous_id)
+                except BridgeError:
+                    # Binding is already rotated; the old remote cache expires.
+                    trace.error = "remote_reset_unavailable"
             trace.path, trace.context_status = "local", "reset"
             message = (
                 "Ein neues Gespräch beginnt."
@@ -245,7 +293,7 @@ class CodexVoiceConversationEntity(
                 conversation.AssistantContent(agent_id=self.entity_id, content=message)
             )
             result = conversation.async_get_result_from_chat_log(user_input, chat_log)
-            self._diagnostics.finish(trace)
+            self._finish_trace(trace)
             return result
         try:
             if session is not None and self._session_store is not None:
@@ -265,13 +313,315 @@ class CodexVoiceConversationEntity(
             return _error_result(
                 user_input,
                 chat_log,
-                _bridge_error_message(user_input.language, bool(trace.tools_ms)),
+                _bridge_error_message(
+                    user_input.language, bool(trace.tool_calls_executed)
+                ),
             )
         finally:
             if session is not None and trace.path == "error":
                 self._sessions.reset(session)
                 session.restored = True
+            self._finish_trace(trace)
+
+    def _finish_trace(self, trace: TurnTrace) -> None:
+        """Freeze direct handler calls; normal process calls include cleanup time."""
+        if self._current_trace.get() is None:
             self._diagnostics.finish(trace)
+
+    def _select_request_context(
+        self, text: str, session: Session | None, trace: TurnTrace
+    ) -> tuple[ContextDecision, ToolSelection]:
+        """Select history and capabilities without any model or API request."""
+        if not self._adaptive:
+            return ContextDecision("independent"), select_tools(text)
+        trace.mark("context_selection_started")
+        decision = select_context(
+            text,
+            has_context=bool(session and session.history),
+            question=session.pending_question if session else None,
+            now=monotonic(),
+        )
+        selection = select_tools(
+            text,
+            inherited_home=bool(
+                decision.use_context and session and session.home_context
+            ),
+            inherited_action=bool(
+                decision.kind == "question_answer"
+                and session
+                and session.action_context
+            ),
+        )
+        trace.context_choice = decision.kind
+        trace.mark("context_selection_completed")
+        return decision, selection
+
+    def _clarify_request(
+        self,
+        user: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
+        session: Session | None,
+        decision: ContextDecision,
+        selection: ToolSelection,
+        trace: TurnTrace,
+    ) -> conversation.ConversationResult | None:
+        """Ask locally for missing context; never infer targets from local prose."""
+        unverified = session is not None and _unverified_local_reference(
+            session, chat_log, user.text
+        )
+        if not unverified and decision.kind != "clarify":
+            return None
+        trace.path = "clarification"
+        if unverified:
+            message = (
+                "Welches Gerät meinst du?"
+                if user.language.startswith("de")
+                else "Which device do you mean?"
+            )
+            if self._adaptive and session is not None:
+                self._sessions.reset(session)
+                session.remember_turn(
+                    [
+                        {"role": "user", "content": user.text},
+                        {"role": "assistant", "content": message},
+                    ]
+                )
+                session.pending_question = pending_question(message, now=monotonic())
+                session.home_context, session.action_context = (
+                    True,
+                    selection.writes_requested,
+                )
+        else:
+            message = (
+                "Worauf bezieht sich deine Frage? Bitte nenne das Thema."
+                if user.language.startswith("de")
+                else "What does your question refer to? Please name the topic."
+            )
+        chat_log.async_add_assistant_content_without_tools(
+            conversation.AssistantContent(agent_id=self.entity_id, content=message)
+        )
+        return conversation.async_get_result_from_chat_log(user, chat_log)
+
+    async def _async_authorize_tool(
+        self,
+        call: BridgeToolCall,
+        chat_log: conversation.ChatLog,
+        user: conversation.ConversationInput,
+        selection: ToolSelection,
+        trace: TurnTrace,
+    ) -> None:
+        """Authorize the actual registered tool before any HA dispatch."""
+        if not self._adaptive or chat_log.llm_api is None:
+            return
+        available = next(
+            (tool for tool in chat_log.llm_api.tools if tool.name == call.name), None
+        )
+        if available is None:
+            raise BridgeProtocolError("Unregistered Home Assistant tool")
+        authenticated_ui = False
+        if user.context.user_id and not user.device_id and not user.satellite_id:
+            account = await self.hass.auth.async_get_user(user.context.user_id)
+            authenticated_ui = bool(
+                account and account.is_active and not account.system_generated
+            )
+        try:
+            authorize_tool(
+                available,
+                call.arguments,
+                writes_requested=selection.writes_requested,
+                authenticated_ui=authenticated_ui,
+            )
+        except ToolAuthorizationRequired:
+            trace.error = "tool_authorization_required"
+            raise BridgeProtocolError(
+                "Explicit action authorization required"
+            ) from None
+
+    async def _async_try_local(
+        self,
+        user: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
+        session: Session | None,
+        decision: ContextDecision,
+        selection: ToolSelection,
+        pending_action: str | None,
+        trace: TurnTrace,
+    ) -> conversation.ConversationResult | None:
+        """Prefer native local intents only within the selected Assist capability."""
+        apis = self.subentry.data.get(CONF_LLM_HASS_API, [])
+        if isinstance(apis, str):
+            apis = [apis]
+        if (
+            not self._adaptive
+            or not selection.home_assistant
+            or llm.LLM_API_ASSIST not in apis
+        ):
+            return None
+        trace.mark("local_intent_started")
+        try:
+            local = await async_try_local_intent(
+                self.hass,
+                user,
+                chat_log,
+                pending_light_action=pending_action,
+                allow_native=decision.kind == "independent",
+            )
+        finally:
+            trace.mark("local_intent_completed")
+        if local is None:
+            return None
+        trace.path = "clarification" if local.pending_light_action else "local"
+        if (
+            local.response.response_type is intent.IntentResponseType.ERROR
+            or local.response.failed_results
+        ):
+            trace.path, trace.error = "error", "local_intent_failed"
+        speech = local.response.speech.get("plain", {}).get("speech", "")
+        chat_log.async_add_assistant_content_without_tools(
+            conversation.AssistantContent(agent_id=self.entity_id, content=speech)
+        )
+        if session is not None and trace.path != "error":
+            self._remember_local_turn(session, user, chat_log, local)
+        return conversation.ConversationResult(
+            response=local.response,
+            conversation_id=chat_log.conversation_id,
+            continue_conversation=bool(local.pending_light_action),
+        )
+
+    def _remember_local_turn(
+        self,
+        session: Session,
+        user: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
+        local: LocalResult,
+    ) -> None:
+        """Retain structured native outcomes, never guess a target from speech."""
+        speech = local.response.speech.get("plain", {}).get("speech", "")
+        messages: list[dict[str, Any]] = [
+            {"role": "user", "content": user.text},
+            {"role": "assistant", "content": speech},
+        ]
+        if local.pending_light_action:
+            session.pending_question = PendingQuestion("entity", monotonic())
+            session.pending_light_action = local.pending_light_action
+        else:
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_name": "local_intent",
+                    "result": local.response.as_dict(),
+                }
+            )
+        session.remember_turn(messages)
+        session.home_context = True
+        session.action_context = (
+            local.response.response_type is intent.IntentResponseType.ACTION_DONE
+        )
+        session.ha_id, session.ha_size = chat_log.conversation_id, len(chat_log.content)
+        if self.subentry.data.get(CONF_SESSION_CONTINUITY) is False:
+            self._sessions.reset(session)
+
+    def _conversation_payload(
+        self,
+        user: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
+        session: Session | None,
+        decision: ContextDecision,
+        trace: TurnTrace,
+    ) -> dict[str, Any]:
+        """Keep legacy messages intact and send only selected adaptive history."""
+        options = self.subentry.data
+        effort, tier = _conversation_settings(options)
+        payload = {
+            "correlation_id": trace.correlation_id,
+            "conversation_id": session.conversation_id
+            if session
+            else chat_log.conversation_id,
+            "text": user.text,
+            "language": user.language,
+            "model": options.get(CONF_MODEL, DEFAULT_CONVERSATION_MODEL),
+            "effort": effort,
+            "service_tier": tier,
+            "instructions": _conversation_instructions(chat_log),
+            "messages": [*session.history, {"role": "user", "content": user.text}]
+            if session
+            else _serialize_chat_log(chat_log),
+            "tools": _serialize_tools(chat_log),
+        }
+        if self._adaptive:
+            payload.update(
+                {
+                    "context_policy": CONTEXT_ADAPTIVE,
+                    "context_selection": decision.kind,
+                    "conversation_id": session.conversation_id
+                    if session
+                    else uuid4().hex,
+                    "messages": [
+                        *(session.history if session and decision.use_context else []),
+                        {"role": "user", "content": user.text},
+                    ],
+                    "instructions": _conversation_instructions(chat_log)
+                    + "\n\n"
+                    + ADAPTIVE_INSTRUCTIONS,
+                    "request_id": trace.correlation_id,
+                }
+            )
+        if session is not None:
+            payload.update(
+                {
+                    "request_id": trace.correlation_id,
+                    "session_idle_seconds": self._sessions.ttl,
+                    "session_restored": session.restored,
+                    "history_complete": session.history_complete,
+                }
+            )
+        return payload
+
+    def _remember_bridge_turn(
+        self,
+        chat_log: conversation.ChatLog,
+        session: Session | None,
+        selection: ToolSelection,
+        answer: str,
+    ) -> None:
+        """Retain only the successful current turn from the native HA chat log."""
+        if session is None:
+            return
+        current = _serialize_chat_log(chat_log)
+        current_user = max(
+            index for index, item in enumerate(current) if item.get("role") == "user"
+        )
+        session.remember_turn(current[current_user:])
+        if self._adaptive:
+            session.pending_question = pending_question(answer, now=monotonic())
+            session.home_context, session.action_context = (
+                selection.home_assistant,
+                selection.writes_requested,
+            )
+        session.restored = False
+        session.ha_id, session.ha_size = chat_log.conversation_id, len(chat_log.content)
+        if self._adaptive and self.subentry.data.get(CONF_SESSION_CONTINUITY) is False:
+            self._sessions.reset(session)
+
+    async def _async_handle_started(
+        self,
+        event: dict[str, Any],
+        user: conversation.ConversationInput,
+        trace: TurnTrace,
+        handle_delta: DeltaHandler,
+    ) -> None:
+        """Require the bridge contract and disclose incomplete selected context."""
+        if self._adaptive and event.get("context_policy") != CONTEXT_ADAPTIVE:
+            raise BridgeProtocolError(
+                "Single-turn-first bridge required; update the bridge"
+            )
+        trace.context_status = _session_context_status(event)
+        if trace.context_status in {"lost", "partial"}:
+            await handle_delta(
+                "Der frühere Gesprächskontext ist nur teilweise verfügbar. Bitte nenne nötige Details erneut. "
+                if user.language.startswith("de")
+                else "Earlier conversation context is incomplete. Please repeat any needed details. "
+            )
 
     async def _async_run_message(
         self,
@@ -283,23 +633,37 @@ class CodexVoiceConversationEntity(
         options = self.subentry.data
         active = self._active_session.get()
         session = active[0] if active else None
-        if session is not None and _unverified_local_reference(
-            session, chat_log, user_input.text
+        decision, selection = self._select_request_context(
+            user_input.text, session, trace
+        )
+        if clarification := self._clarify_request(
+            user_input, chat_log, session, decision, selection, trace
         ):
-            trace.path = "clarification"
-            chat_log.async_add_assistant_content_without_tools(
-                conversation.AssistantContent(
-                    agent_id=self.entity_id,
-                    content="Welches Gerät meinst du?"
-                    if user_input.language.startswith("de")
-                    else "Which device do you mean?",
-                )
-            )
-            return conversation.async_get_result_from_chat_log(user_input, chat_log)
+            return clarification
+        pending_action = (
+            session.pending_light_action
+            if session and decision.kind == "question_answer"
+            else None
+        )
+        if self._adaptive:
+            if session is not None:
+                if not decision.use_context:
+                    self._sessions.reset(session)
+                session.conversation_id = uuid4().hex
+                session.pending_question = None
+                session.pending_light_action = None
+            # HA otherwise carries this prompt over from an older ChatLog turn.
+            chat_log.extra_system_prompt = None
+        if local := await self._async_try_local(
+            user_input, chat_log, session, decision, selection, pending_action, trace
+        ):
+            return local
         try:
             await chat_log.async_provide_llm_data(
                 user_input.as_llm_context(DOMAIN),
-                options.get(CONF_LLM_HASS_API),
+                options.get(CONF_LLM_HASS_API)
+                if not self._adaptive or selection.home_assistant
+                else None,
                 options.get(CONF_PROMPT),
                 user_input.extra_system_prompt,
             )
@@ -308,6 +672,7 @@ class CodexVoiceConversationEntity(
             return err.as_conversation_result()
 
         pending_text: list[str] = []
+        answer_parts: list[str] = []
         stream_started = False
 
         async def async_flush_text() -> None:
@@ -327,6 +692,7 @@ class CodexVoiceConversationEntity(
         async def async_handle_delta(delta: str) -> None:
             nonlocal stream_started
             trace.mark("first_text_delta")
+            answer_parts.append(delta)
             if not stream_started:
                 if chat_log.delta_listener:
                     chat_log.delta_listener(chat_log, {"role": "assistant"})
@@ -342,6 +708,9 @@ class CodexVoiceConversationEntity(
                     "error": "tool_not_available",
                     "error_text": "No Home Assistant LLM API is configured",
                 }
+            await self._async_authorize_tool(
+                tool_call, chat_log, user_input, selection, trace
+            )
 
             tool_input = llm.ToolInput(
                 id=tool_call.call_id,
@@ -362,6 +731,7 @@ class CodexVoiceConversationEntity(
                 "error": "tool_failed",
                 "error_text": "The Home Assistant tool returned no result",
             }
+            trace.tool_calls_executed += 1
             async for tool_result in chat_log.async_add_assistant_content(
                 assistant_content
             ):
@@ -375,50 +745,23 @@ class CodexVoiceConversationEntity(
         async def measured_tool_handler(tool_call: BridgeToolCall) -> dict[str, Any]:
             return await _execute_measured_tool(original_tool_handler, tool_call, trace)
 
-        effort, service_tier = _conversation_settings(options)
-
-        start_payload = {
-            "correlation_id": trace.correlation_id,
-            "conversation_id": session.conversation_id
-            if session
-            else chat_log.conversation_id,
-            "text": user_input.text,
-            "language": user_input.language,
-            "model": options.get(CONF_MODEL, DEFAULT_CONVERSATION_MODEL),
-            "effort": effort,
-            "service_tier": service_tier,
-            "instructions": _conversation_instructions(chat_log),
-            "messages": [*session.history, {"role": "user", "content": user_input.text}]
-            if session
-            else _serialize_chat_log(chat_log),
-            "tools": _serialize_tools(chat_log),
-        }
-        if session is not None:
-            start_payload.update(
-                {
-                    "request_id": trace.correlation_id,
-                    "session_idle_seconds": self._sessions.ttl,
-                    "session_restored": session.restored,
-                    "history_complete": session.history_complete,
-                }
-            )
+        start_payload = self._conversation_payload(
+            user_input, chat_log, session, decision, trace
+        )
+        trace.tools_available = bool(start_payload["tools"])
 
         async def handle_started(event: dict[str, Any]) -> None:
-            trace.context_status = _session_context_status(event)
-            if trace.context_status in {"lost", "partial"}:
-                message = (
-                    "Der frühere Gesprächskontext ist nur teilweise verfügbar. Bitte nenne nötige Details erneut. "
-                    if user_input.language.startswith("de")
-                    else "Earlier conversation context is incomplete. Please repeat any needed details. "
-                )
-                await async_handle_delta(message)
+            await self._async_handle_started(
+                event, user_input, trace, async_handle_delta
+            )
 
         callbacks: dict[str, Any] = {}
-        if session is not None:
+        if session is not None or self._adaptive:
             callbacks["async_handle_started"] = handle_started
 
         try:
             trace.mark("codex_requested")
+            trace.bridge_turn_requests += 1
             await self.entry.runtime_data.async_converse(
                 start_payload,
                 async_handle_delta=async_handle_delta,
@@ -427,20 +770,9 @@ class CodexVoiceConversationEntity(
             )
             trace.mark("codex_completed")
             await async_flush_text()
-            if session is not None:
-                current = _serialize_chat_log(chat_log)
-                # Retain only this successful turn, never foreign HA histories.
-                current_user = max(
-                    index
-                    for index, item in enumerate(current)
-                    if item.get("role") == "user"
-                )
-                session.remember_turn(current[current_user:])
-                session.restored = False
-                session.ha_id, session.ha_size = (
-                    chat_log.conversation_id,
-                    len(chat_log.content),
-                )
+            self._remember_bridge_turn(
+                chat_log, session, selection, "".join(answer_parts)
+            )
         except BridgeAuthenticationError:
             trace.path, trace.error = "error", "authentication_required"
             self.entry.async_start_reauth(self.hass)
@@ -471,7 +803,14 @@ class CodexVoiceConversationEntity(
             return _error_result(
                 user_input,
                 chat_log,
-                _bridge_error_message(user_input.language, bool(trace.tools_ms)),
+                "Für diese Aktion ist eine eindeutige Geräteart und gegebenenfalls eine gesonderte Autorisierung erforderlich."
+                if trace.error == "tool_authorization_required"
+                and user_input.language.startswith("de")
+                else "This action requires an unambiguous device domain and, where applicable, separate authorization."
+                if trace.error == "tool_authorization_required"
+                else _bridge_error_message(
+                    user_input.language, bool(trace.tool_calls_executed)
+                ),
             )
 
         return conversation.async_get_result_from_chat_log(user_input, chat_log)

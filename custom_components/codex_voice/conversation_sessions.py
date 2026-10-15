@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
+from .context_policy import PendingQuestion
 from .json_serialization import normalize_json
 
 MAX_SESSIONS = 128
@@ -40,6 +41,10 @@ class Session:
     local_action_unverified: bool = False
     ha_id: str | None = field(default=None, repr=False)
     ha_size: int = 0
+    pending_question: PendingQuestion | None = field(default=None, repr=False)
+    home_context: bool = False
+    action_context: bool = False
+    pending_light_action: str | None = None
 
     def reset(self, now: float) -> None:
         """Rotate continuity so old model threads cannot be reused."""
@@ -51,6 +56,10 @@ class Session:
         self.local_action_unverified = False
         self.ha_id = None
         self.ha_size = 0
+        self.pending_question = None
+        self.home_context = False
+        self.action_context = False
+        self.pending_light_action = None
 
     def remember_turn(self, messages: list[dict[str, Any]]) -> None:
         """Retain complete recent messages within an explicit context budget."""
@@ -96,6 +105,7 @@ class SessionManager:
         satellite_id: str | None,
         user_id: str | None,
         incoming_id: str | None,
+        bind_user: bool = False,
     ) -> tuple[str, str]:
         """Never combine anonymous devices unless explicitly configured."""
         if device_id:
@@ -104,6 +114,8 @@ class SessionManager:
             source, value = "satellite", satellite_id
         elif self.fallback:
             source, value = "configured_fallback", self.fallback
+        elif user_id and bind_user:
+            source, value = "user", user_id
         elif incoming_id:
             source, value = "incoming_id", incoming_id
         else:

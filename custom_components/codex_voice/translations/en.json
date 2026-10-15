@@ -57,6 +57,7 @@
         "init": {
           "title": "Conversation agent",
           "data": {
+            "context_mode": "Conversation behavior",
             "llm_hass_api": "Control Home Assistant",
             "model": "Model",
             "name": "Name",
@@ -71,16 +72,17 @@
             "session_metadata": "Persist session metadata (no conversation text)"
           },
           "data_description": {
+            "context_mode": "New profiles answer independently and use short context only for follow-ups, answers to questions or explicit continuation. Existing profiles keep their previous behavior.",
             "llm_hass_api": "Select the Home Assistant LLM APIs whose exposed entities and tools this agent may use.",
             "prompt": "Instructions supplied before the conversation. Templates are supported.",
             "realtime_authority": "Exactly one conversation agent may provide tools to realtime voice. Tool access is limited to the Home Assistant APIs selected above.",
             "realtime_language": "Language and locale used for realtime tool context and responses.",
             "reasoning_effort": "Choose low, medium, high, xhigh, max, or ultra; higher effort can improve difficult reasoning at the cost of latency.",
             "service_tier": "Priority targets lower latency and increases subscription usage compared with standard.",
-            "session_continuity": "Isolate conversations per device and known HA user. Existing profiles remain ID-only until enabled.",
+            "session_continuity": "Retain bounded context per device and known HA user. When disabled, no previous context is reused. Existing profiles keep their original session behavior.",
             "session_idle_minutes": "Inactivity after the last completed turn; default 15 minutes.",
             "session_fallback": "Leave empty normally. Only use a dedicated profile for one satellite without a reliable ID. All unidentified callers of that profile share this explicit binding.",
-            "session_metadata": "Save only hashed owners, random session IDs and timestamps. Text stays in bounded RAM. If all context is lost, the assistant says so."
+            "session_metadata": "Legacy mode only: save hashed owners, random session IDs and timestamps. Independent mode always keeps context in RAM only."
           }
         }
       }
@@ -130,6 +132,14 @@
             "instructions": "Optional instructions for tone, pacing, accent, or emotion."
           }
         }
+      }
+    }
+  },
+  "selector": {
+    "context_mode": {
+      "options": {
+        "single_turn_first": "Independent requests, context when needed",
+        "legacy": "Previous conversation behavior"
       }
     }
   },

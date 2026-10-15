@@ -37,7 +37,7 @@ jobs:
       - name: Check formatting
         run: uv run ruff format --check .
       - name: Typecheck Computer session and diagnostic modules
-        run: uv run mypy --follow-imports=silent custom_components/codex_voice/api.py custom_components/codex_voice/llm_tools.py custom_components/codex_voice/realtime_tools.py custom_components/codex_voice/conversation.py custom_components/codex_voice/conversation_sessions.py custom_components/codex_voice/json_serialization.py custom_components/codex_voice/metrics.py scripts/collect_assist_trace.py
+        run: uv run mypy --follow-imports=silent custom_components/codex_voice/api.py custom_components/codex_voice/llm_tools.py custom_components/codex_voice/realtime_tools.py custom_components/codex_voice/conversation.py custom_components/codex_voice/conversation_sessions.py custom_components/codex_voice/json_serialization.py custom_components/codex_voice/metrics.py custom_components/codex_voice/context_policy.py custom_components/codex_voice/tool_policy.py custom_components/codex_voice/local_intents.py custom_components/codex_voice/personal_knowledge.py custom_components/codex_voice/web_research.py scripts/collect_assist_trace.py
       - name: Test Home Assistant component
         run: uv run pytest tests/component --cov=custom_components --cov-report=term-missing
       - name: Test bridge

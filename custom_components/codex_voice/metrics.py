@@ -17,6 +17,8 @@ STAGES = (
     "local_intent_started",
     "local_intent_completed",
     "conversation_received",
+    "context_selection_started",
+    "context_selection_completed",
     "codex_requested",
     "codex_completed",
     "first_text_delta",
@@ -39,6 +41,10 @@ class TurnTrace:
     incoming_id_present: bool = False
     incoming_id_changed: bool | None = None
     context_status: str = "not_observed"
+    context_choice: str = "legacy"
+    tools_available: bool = False
+    tool_calls_executed: int = 0
+    bridge_turn_requests: int = 0
 
     def mark(self, stage: str) -> None:
         """Record an allowlisted boundary once."""
@@ -56,10 +62,30 @@ class TurnTrace:
             "incoming_id_present": self.incoming_id_present,
             "incoming_id_changed": self.incoming_id_changed,
             "context_status": self.context_status,
+            "context_choice": self.context_choice,
+            "tools_available": self.tools_available,
+            "tool_calls_executed": self.tool_calls_executed,
+            "bridge_turn_requests": self.bridge_turn_requests,
             "stages_ms": {stage: self.stages.get(stage) for stage in STAGES},
             "tools_ms": list(self.tools_ms),
+            "context_selection_ms": self._duration(
+                "context_selection_started", "context_selection_completed"
+            ),
+            "local_intent_ms": self._duration(
+                "local_intent_started", "local_intent_completed"
+            ),
+            "model_wait_ms": max(0.0, duration - sum(self.tools_ms))
+            if (duration := self._duration("codex_requested", "codex_completed"))
+            is not None
+            else None,
             "total_ms": round((monotonic() - self.started) * 1000, 3),
         }
+
+    def _duration(self, start: str, end: str) -> float | None:
+        """Exclude unknown boundaries rather than inventing zero durations."""
+        if start not in self.stages or end not in self.stages:
+            return None
+        return round(self.stages[end] - self.stages[start], 3)
 
 
 class DiagnosticBuffer:

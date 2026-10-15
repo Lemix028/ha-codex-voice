@@ -5,6 +5,38 @@ and releases use semantic versioning.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-12
+
+### Added
+
+- Single-turn-first for new profiles: deterministic follow-up/question/explicit
+  continuation selection, bounded RAM context and one fresh App Server turn.
+- Local light shortcuts through existing HA intents: "Computer, Licht" toggles
+  exposed room lights; on/off and safe native commands acknowledge with "Okay."
+  Ambiguous targets ask locally; errors remain final and are never retried.
+- Separate context, local intent, tool, model/bridge-wait and total timing fields,
+  with content-free diagnostics and observable App Server turn counts.
+- Default-off curated/export knowledge repository and separate web capability
+  policy; neither is registered as a tool or granted account/network access.
+- Synthetic regression coverage for native HA ChatLogs, recognizer, room scope,
+  privacy, authority, topic changes, replay and fresh-thread cleanup.
+
+### Fixed
+
+- Dispose fresh threads even if the started handshake is cancelled, and during
+  shutdown; reject unregistered, repeated or excess dynamic tool calls.
+- Enforce actual text lengths and integer budgets; reject incompatible knowledge
+  schemas without silently recreating versioned tables.
+- Prevent a new light command or statement from answering a stale entity question;
+  honor disabled context caching and clear rendered home context on new topics.
+
+### Compatibility
+
+- Profiles without `context_mode` preserve v0.7.0 behavior. Adaptive profiles
+  require a matching bridge and never persist session metadata.
+- No firmware or live deployment changes. Green Echo-ring feedback remains
+  optional and unsupported by the inspected hassmic RGB/control surface.
+
 ## [0.7.0] - 2026-10-10
 
 ### Added

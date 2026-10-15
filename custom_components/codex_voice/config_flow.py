@@ -41,6 +41,7 @@ from .api import (
 from .const import (
     CONF_ACCESS_TOKEN,
     CONF_BRIDGE_URL,
+    CONF_CONTEXT_MODE,
     CONF_INSTRUCTIONS,
     CONF_MODEL,
     CONF_REALTIME_AUTHORITY,
@@ -72,6 +73,7 @@ from .const import (
     SUPPORTED_SERVICE_TIERS,
     SUPPORTED_VOICES,
 )
+from .context_policy import CONTEXT_ADAPTIVE, CONTEXT_LEGACY, CONTEXT_MODES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -103,6 +105,7 @@ def _default_subentries() -> list[ConfigSubentryData]:
             "unique_id": None,
             "data": {
                 CONF_MODEL: DEFAULT_CONVERSATION_MODEL,
+                CONF_CONTEXT_MODE: CONTEXT_ADAPTIVE,
                 CONF_REASONING_EFFORT: DEFAULT_CONVERSATION_REASONING_EFFORT,
                 CONF_SERVICE_TIER: DEFAULT_CONVERSATION_SERVICE_TIER,
                 CONF_PROMPT: llm.DEFAULT_INSTRUCTIONS_PROMPT,
@@ -114,7 +117,7 @@ def _default_subentries() -> list[ConfigSubentryData]:
                 CONF_REALTIME_LANGUAGE: DEFAULT_REALTIME_LANGUAGE,
                 CONF_SESSION_CONTINUITY: True,
                 CONF_SESSION_TTL: 15,
-                CONF_SESSION_METADATA: True,
+                CONF_SESSION_METADATA: False,
             },
         },
         {
@@ -322,6 +325,7 @@ class CodexVoiceSubentryFlow(ConfigSubentryFlow):
         """Start reconfiguring a profile."""
         self._values = dict(self._get_reconfigure_subentry().data)
         if self._subentry_type == SUBENTRY_TYPE_CONVERSATION:
+            self._values.setdefault(CONF_CONTEXT_MODE, CONTEXT_LEGACY)
             # Preserve the usage behavior of profiles created before service
             # tiers were configurable. New profiles explicitly store priority.
             self._values.setdefault(
@@ -397,6 +401,14 @@ class CodexVoiceSubentryFlow(ConfigSubentryFlow):
                 {
                     vol.Required(CONF_MODEL): str,
                     vol.Optional(
+                        CONF_CONTEXT_MODE,
+                        default=self._values.get(CONF_CONTEXT_MODE, CONTEXT_LEGACY),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=list(CONTEXT_MODES), translation_key="context_mode"
+                        )
+                    ),
+                    vol.Optional(
                         CONF_SESSION_CONTINUITY,
                         default=self._values.get(CONF_SESSION_CONTINUITY, False),
                     ): bool,
@@ -450,6 +462,7 @@ class CodexVoiceSubentryFlow(ConfigSubentryFlow):
             return {
                 CONF_NAME: DEFAULT_CONVERSATION_NAME,
                 CONF_MODEL: DEFAULT_CONVERSATION_MODEL,
+                CONF_CONTEXT_MODE: CONTEXT_ADAPTIVE,
                 CONF_REASONING_EFFORT: DEFAULT_CONVERSATION_REASONING_EFFORT,
                 CONF_SERVICE_TIER: DEFAULT_CONVERSATION_SERVICE_TIER,
                 CONF_PROMPT: llm.DEFAULT_INSTRUCTIONS_PROMPT,
@@ -458,7 +471,7 @@ class CodexVoiceSubentryFlow(ConfigSubentryFlow):
                 CONF_REALTIME_LANGUAGE: DEFAULT_REALTIME_LANGUAGE,
                 CONF_SESSION_CONTINUITY: True,
                 CONF_SESSION_TTL: 15,
-                CONF_SESSION_METADATA: True,
+                CONF_SESSION_METADATA: False,
             }
         if self._subentry_type == SUBENTRY_TYPE_STT:
             return {CONF_NAME: DEFAULT_STT_NAME}

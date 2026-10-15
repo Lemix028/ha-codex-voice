@@ -11,7 +11,9 @@ from array import array
 from collections.abc import Mapping
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from aiohttp import WSCloseCode, WSMsgType, WSServerHandshakeError, web
@@ -24,6 +26,148 @@ from bridge.runtime import IsolatedCodexRuntime
 from bridge.service import BridgeState, _codex_child_environment, create_app
 
 AUTH = {"Authorization": "Bearer test-token"}
+
+
+def _single_turn_start(**overrides: Any) -> dict[str, Any]:
+    return {
+        "type": "start",
+        "context_policy": "single_turn_first",
+        "context_selection": "independent",
+        "request_id": "a" * 32,
+        "conversation_id": "same-ha-id",
+        "text": "synthetic question",
+        "messages": [{"role": "user", "content": "synthetic question"}],
+        **overrides,
+    }
+
+
+async def test_single_turn_requests_create_and_delete_fresh_threads(
+    aiohttp_client: Any,
+    bridge_app: web.Application,
+    fake_rpc: FakeRpc,
+) -> None:
+    fake_rpc.emit_tool_once = False
+    client = await aiohttp_client(bridge_app)
+    for request_id in ("a" * 32, "b" * 32):
+        ws = await client.ws_connect("/v1/conversation", headers=AUTH)
+        await ws.send_json(_single_turn_start(request_id=request_id))
+        started = await ws.receive_json(timeout=1)
+        assert started["context_policy"] == "single_turn_first"
+        assert started["context_status"] == "new"
+        assert (await ws.receive_json(timeout=1))["type"] == "delta"
+        assert (await ws.receive_json(timeout=1))["type"] == "done"
+        await ws.close()
+    async with asyncio.timeout(1):
+        while sum(method == "thread/delete" for method, _ in fake_rpc.calls) < 2:
+            await asyncio.sleep(0)
+    assert fake_rpc.thread_count == fake_rpc.turn_count == 2
+    state = bridge_app[bridge_service.STATE_KEY]
+    assert not state._fresh_threads and not state._conversations
+    for method, params in fake_rpc.calls:
+        if method == "turn/start":
+            assert "home_assistant_history" not in params.get("additionalContext", {})
+
+
+async def test_single_turn_follow_up_seeds_only_selected_history(
+    aiohttp_client: Any,
+    bridge_app: web.Application,
+    fake_rpc: FakeRpc,
+) -> None:
+    fake_rpc.emit_tool_once = False
+    client = await aiohttp_client(bridge_app)
+    ws = await client.ws_connect("/v1/conversation", headers=AUTH)
+    await ws.send_json(
+        _single_turn_start(
+            context_selection="follow_up",
+            messages=[
+                {"role": "user", "content": "selected prior question"},
+                {"role": "assistant", "content": "selected prior answer"},
+                {"role": "user", "content": "synthetic question"},
+            ],
+        )
+    )
+    assert (await ws.receive_json(timeout=1))["context_status"] == "recovered"
+    assert (await ws.receive_json(timeout=1))["type"] == "delta"
+    assert (await ws.receive_json(timeout=1))["type"] == "done"
+    await ws.close()
+    [turn] = [params for method, params in fake_rpc.calls if method == "turn/start"]
+    history = turn["additionalContext"]["home_assistant_history"]["value"]
+    assert "selected prior question" in history
+    assert "synthetic question" not in history
+
+
+async def test_single_turn_replay_is_rejected_before_thread_creation(
+    fake_rpc: FakeRpc,
+) -> None:
+    state = BridgeState(BridgeConfig(bearer_token="test-token"), rpc=fake_rpc)
+    await state.rpc.start()
+    try:
+        thread_id, *_ = await state.conversation_thread(_single_turn_start())
+        await state.release_fresh_thread(thread_id)
+        with pytest.raises(ProtocolError, match="Duplicate"):
+            await state.conversation_thread(_single_turn_start())
+        assert fake_rpc.thread_count == 1
+    finally:
+        await state.close()
+
+
+async def test_single_turn_rejects_unregistered_provider_tool(
+    aiohttp_client: Any,
+    bridge_app: web.Application,
+    fake_rpc: FakeRpc,
+) -> None:
+    # The fake provider emits HassTurnOn; the client grants no tools.
+    client = await aiohttp_client(bridge_app)
+    ws = await client.ws_connect("/v1/conversation", headers=AUTH)
+    await ws.send_json(_single_turn_start())
+    assert (await ws.receive_json(timeout=1))["type"] == "started"
+    assert (await ws.receive_json(timeout=1))["type"] == "delta"
+    error = await ws.receive_json(timeout=1)
+    assert error["type"] == "error"
+    assert "unregistered" in error["error"]
+    await ws.close()
+    assert not fake_rpc.responses
+
+
+async def test_single_turn_cancelled_started_handshake_disposes_thread(
+    bridge_app: web.Application,
+    fake_rpc: FakeRpc,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = bridge_app[bridge_service.STATE_KEY]
+    await state.rpc.start()
+    thread_id, *_ = await state.conversation_thread(_single_turn_start())
+    socket = Mock(
+        prepare=AsyncMock(),
+        send_json=AsyncMock(side_effect=asyncio.CancelledError),
+        close=AsyncMock(),
+        closed=False,
+    )
+    monkeypatch.setattr(
+        bridge_service.web, "WebSocketResponse", lambda **kwargs: socket
+    )
+    monkeypatch.setattr(
+        bridge_service, "_receive_ws_json", AsyncMock(return_value=_single_turn_start())
+    )
+    monkeypatch.setattr(
+        state,
+        "conversation_thread",
+        AsyncMock(
+            return_value=(
+                thread_id,
+                False,
+                True,
+                bridge_service._ConversationTurnState(),
+            )
+        ),
+    )
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await bridge_service._conversation(SimpleNamespace(app=bridge_app))
+        assert not state._fresh_threads
+        assert sum(method == "thread/delete" for method, _ in fake_rpc.calls) == 1
+    finally:
+        await state.close()
 
 
 def _transcription_payload() -> dict[str, Any]:

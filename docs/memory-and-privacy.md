@@ -1,5 +1,23 @@
 # Kurzzeitkontext und Datenschutz
 
+## Ergänzung für v0.8.0
+
+Neue Profile verwenden Kontext nur bei erkennbarer Anschlussfrage, einer
+passenden Antwort auf eine höchstens zwei Minuten alte Rückfrage oder
+ausdrücklicher Fortsetzung. Eigenständige Themen übertragen keine alte
+Historie. Der letzte Kontext bleibt begrenzt im RAM; Reset, Fehler, TTL und
+Neustart entfernen ihn. Auch strukturierte lokale HA-Ergebnisse werden nur
+für diesen kurzfristigen Kontext behalten, niemals im Diagnose-Ring.
+
+Adaptive Profile speichern keine Sitzungsmetadaten und verwenden für jeden
+Turn einen frischen Codex-Thread mit unmittelbarem Löschversuch. Die bisherigen Profile behalten
+ihren v0.7.0-Modus und dessen unten beschriebene Wiederherstellung. Das separate
+Wissensrepository und die Webrichtlinie sind vorbereitet, standardmäßig
+deaktiviert und nicht als Modellwerkzeuge registriert. Echo-Satelliten erhalten
+keinen Zugriff auf private Wissenseinträge. Details: [v0.8.0.md](v0.8.0.md).
+
+## Bisheriger Modus und gemeinsame Grenzen
+
 Phase A/B aktiviert **kein Langzeitgedächtnis**, keine automatische Zusammenfassung,
 kein WAV-Archiv und keinen Debug-Mitschnitt. Nutzertexte, Antworten und HA-Tool-
 Ergebnisse werden zur aktuellen Anfrage an Codex gesendet. Der Fork behält bis
@@ -23,7 +41,7 @@ Datenverarbeitung unterliegt weiter dem verwendeten Codex-/ChatGPT-Dienst.
 | HA Store, optional | Gehashte Bindung, Salt, zufällige ID, Zeitstempel | TTL-Bereinigung, Reset rotiert, Deaktivieren entfernt Datei |
 | Diagnose-RAM | Letzte 64 numerische Traces, feste Statuskategorien | Ring / Neustart; Export nur inhaltlos |
 | Codex-Thread | Aktiver Dialog im isolierten Runtime-Home | TTL/Eviction/Reset/Bridge-Shutdown, experimentelles Backend |
-| Langzeitmemory | Kein Speicher implementiert/aktiviert | Separater späterer Review/Opt-in erforderlich |
+| Langzeitmemory | Vorbereitetes Opt-in-Repository, nicht aktiviert oder als Tool registriert | Keine Datenbank ohne explizite Aktivierung und berechtigten Zugriff |
 
 Owner-Hashes sind pseudonyme Metadaten, keine Garantie vollständiger Anonymität.
 Das Salt wird nur in der Store-Datei gespeichert. Diagnosen enthalten weder

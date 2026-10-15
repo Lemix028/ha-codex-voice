@@ -5,6 +5,10 @@ HA Assist → Wyoming Whisper → Conversation → Piper**-Pfad. Die produktive
 Pipeline wird erst nach dem Hardwaretest umgestellt. Kein Echo-Flash/ADB,
 ThirdReality-Overlay oder offenes Mikrofon ist erforderlich.
 
+Für v0.8.0 gelten zusätzlich [Gesprächsmodus, Licht-Kurzbefehle und
+Pipeline-Vorrang](v0.8.0.md). Neue Profile arbeiten eigenständig; bestehende
+Profile wechseln ihren Modus erst nach ausdrücklicher Auswahl.
+
 ## Voraussetzungen und Sicherung
 
 - HA Core mindestens 2026.8.0, Komponenten-Tests gegen **2026.8.0 und 2026.10.0**

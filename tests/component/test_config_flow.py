@@ -18,14 +18,20 @@ from custom_components.codex_voice.api import BridgeAuthenticationError
 from custom_components.codex_voice.const import (
     CONF_ACCESS_TOKEN,
     CONF_BRIDGE_URL,
+    CONF_CONTEXT_MODE,
     CONF_REALTIME_AUTHORITY,
     CONF_REALTIME_LANGUAGE,
     CONF_REASONING_EFFORT,
     CONF_SERVICE_TIER,
+    CONF_SESSION_METADATA,
     DEFAULT_CONVERSATION_REASONING_EFFORT,
     DEFAULT_CONVERSATION_SERVICE_TIER,
     DEFAULT_REALTIME_LANGUAGE,
     DOMAIN,
+)
+from custom_components.codex_voice.context_policy import (
+    CONTEXT_ADAPTIVE,
+    CONTEXT_LEGACY,
 )
 
 
@@ -84,6 +90,8 @@ async def test_user_flow_creates_stable_provider_subentries(
         DEFAULT_CONVERSATION_SERVICE_TIER
     )
     assert result["subentries"][0]["data"][CONF_REALTIME_AUTHORITY] is False
+    assert result["subentries"][0]["data"][CONF_CONTEXT_MODE] == CONTEXT_ADAPTIVE
+    assert result["subentries"][0]["data"][CONF_SESSION_METADATA] is False
     assert (
         result["subentries"][0]["data"][CONF_REALTIME_LANGUAGE]
         == DEFAULT_REALTIME_LANGUAGE
@@ -261,6 +269,8 @@ async def test_legacy_conversation_reconfigure_suggests_safe_supported_values(
     }
     assert suggestions[CONF_REASONING_EFFORT] == (DEFAULT_CONVERSATION_REASONING_EFFORT)
     assert suggestions[CONF_SERVICE_TIER] == "standard"
+    assert suggestions[CONF_CONTEXT_MODE] == CONTEXT_LEGACY
+    assert CONF_CONTEXT_MODE not in subentry.data
 
 
 async def test_duplicate_bridge_is_rejected(hass: HomeAssistant) -> None:
