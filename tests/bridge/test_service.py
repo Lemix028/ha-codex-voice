@@ -21,7 +21,7 @@ from aiohttp import WSCloseCode, WSMsgType, WSServerHandshakeError, web
 from bridge import __main__ as bridge_main
 from bridge import service as bridge_service
 from bridge.config import DEFAULT_CODEX_COMMAND, BridgeConfig
-from bridge.errors import AppServerExited, BridgeBusyError, ProtocolError
+from bridge.errors import AppServerExited, BridgeBusyError, ProtocolError, RpcError
 from bridge.runtime import IsolatedCodexRuntime
 from bridge.service import BridgeState, _codex_child_environment, create_app
 
@@ -536,6 +536,7 @@ class FakeRpc:
         self.emit_tool_once = True
         self.emit_turn_completion = True
         self.turn_completion_status = "completed"
+        self.turn_completion_error: dict[str, Any] | None = None
         self.emit_managed_speech_started = False
         self.tool_result_received = asyncio.Event()
         self.active_profile_id = "ha-voice-minimal"
@@ -865,7 +866,15 @@ class FakeRpc:
                 "method": "turn/completed",
                 "params": {
                     "threadId": thread_id,
-                    "turn": {"id": turn_id, "status": self.turn_completion_status},
+                    "turn": {
+                        "id": turn_id,
+                        "status": self.turn_completion_status,
+                        **(
+                            {"error": self.turn_completion_error}
+                            if self.turn_completion_error is not None
+                            else {}
+                        ),
+                    },
                 },
             }
         )
@@ -10067,3 +10076,71 @@ async def test_transcription_fails_immediately_when_app_server_exits() -> None:
         await asyncio.wait_for(
             bridge_service._wait_for_user_transcript(session, 10.0), timeout=0.2
         )
+
+
+@pytest.mark.asyncio
+async def test_codex_quota_from_turn_start_is_typed(
+    aiohttp_client: Any, bridge_app: web.Application, fake_rpc: FakeRpc
+) -> None:
+    fake_rpc.turn_start_error = RpcError(
+        "turn/start", {"message": "You've hit your usage limit. Try again at 7:41 PM"}
+    )
+    client = await aiohttp_client(bridge_app)
+    websocket = await client.ws_connect("/v1/conversation", headers=AUTH)
+    await websocket.send_json(_single_turn_start())
+    assert (await websocket.receive_json(timeout=1))["type"] == "started"
+    assert await websocket.receive_json(timeout=1) == {
+        "type": "error",
+        "code": "quota_exhausted",
+        "error": "Codex usage limit reached",
+    }
+    await websocket.close()
+
+
+@pytest.mark.asyncio
+async def test_codex_quota_from_failed_turn_is_typed(
+    aiohttp_client: Any, bridge_app: web.Application, fake_rpc: FakeRpc
+) -> None:
+    fake_rpc.emit_tool_once = False
+    fake_rpc.turn_completion_status = "failed"
+    fake_rpc.turn_completion_error = {"message": "You've hit your usage limit."}
+    client = await aiohttp_client(bridge_app)
+    websocket = await client.ws_connect("/v1/conversation", headers=AUTH)
+    await websocket.send_json(_single_turn_start())
+    assert (await websocket.receive_json(timeout=1))["type"] == "started"
+    assert (await websocket.receive_json(timeout=1))["type"] == "delta"
+    assert await websocket.receive_json(timeout=1) == {
+        "type": "error",
+        "code": "quota_exhausted",
+        "error": "Codex usage limit reached",
+    }
+    await websocket.close()
+
+
+@pytest.mark.asyncio
+async def test_retryable_app_server_error_keeps_turn_running(
+    aiohttp_client: Any, bridge_app: web.Application, fake_rpc: FakeRpc
+) -> None:
+    fake_rpc.emit_tool_once = False
+    fake_rpc.turn_gate = asyncio.Event()
+    client = await aiohttp_client(bridge_app)
+    websocket = await client.ws_connect("/v1/conversation", headers=AUTH)
+    await websocket.send_json(_single_turn_start())
+    assert (await websocket.receive_json(timeout=1))["type"] == "started"
+    async with asyncio.timeout(1):
+        while not fake_rpc.turn_count:
+            await asyncio.sleep(0)
+    await fake_rpc.broadcast(
+        {
+            "method": "error",
+            "params": {
+                "threadId": "thread-1",
+                "willRetry": True,
+                "error": {"message": "temporary provider failure"},
+            },
+        }
+    )
+    fake_rpc.turn_gate.set()
+    assert (await websocket.receive_json(timeout=1))["type"] == "delta"
+    assert (await websocket.receive_json(timeout=1))["type"] == "done"
+    await websocket.close()

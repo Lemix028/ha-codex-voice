@@ -786,7 +786,9 @@ class CodexVoiceConversationEntity(
             return _error_result(
                 user_input,
                 chat_log,
-                "The ChatGPT subscription quota is currently exhausted.",
+                "Dein Codex-Nutzungslimit ist erreicht. Bitte versuche es später erneut."
+                if user_input.language.startswith("de")
+                else "Your Codex usage limit has been reached. Please try again later.",
             )
         except BridgeBusyError:
             trace.path, trace.error = "error", "busy"
