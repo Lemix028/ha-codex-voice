@@ -19,5 +19,5 @@
   "issue_tracker": "https://github.com/Lemix028/ha-codex-voice/issues",
   "quality_scale": "bronze",
   "requirements": ["voluptuous-openapi==0.4.1"],
-  "version": "0.8.0"
+  "version": "0.8.1"
 }
