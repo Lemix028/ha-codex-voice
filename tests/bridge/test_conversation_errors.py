@@ -45,7 +45,9 @@ def test_internal_errors_remain_diagnostic() -> None:
 
 
 def test_unknown_rpc_provider_error_is_redacted() -> None:
-    assert bridge_error(RpcError("turn/start", {"message": "secret debug payload"})) == {
+    assert bridge_error(
+        RpcError("turn/start", {"message": "secret debug payload"})
+    ) == {
         "type": "error",
         "error": "Codex request failed",
     }
