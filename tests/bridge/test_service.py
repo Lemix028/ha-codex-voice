@@ -21,7 +21,7 @@ from aiohttp import WSCloseCode, WSMsgType, WSServerHandshakeError, web
 from bridge import __main__ as bridge_main
 from bridge import service as bridge_service
 from bridge.config import DEFAULT_CODEX_COMMAND, BridgeConfig
-from bridge.errors import AppServerExited, BridgeBusyError, ProtocolError
+from bridge.errors import AppServerExited, BridgeBusyError, ProtocolError, RpcError
 from bridge.runtime import IsolatedCodexRuntime
 from bridge.service import BridgeState, _codex_child_environment, create_app
 
@@ -10082,8 +10082,6 @@ async def test_transcription_fails_immediately_when_app_server_exits() -> None:
 async def test_codex_quota_from_turn_start_is_typed(
     aiohttp_client: Any, bridge_app: web.Application, fake_rpc: FakeRpc
 ) -> None:
-    from bridge.errors import RpcError
-
     fake_rpc.turn_start_error = RpcError(
         "turn/start", {"message": "You've hit your usage limit. Try again at 7:41 PM"}
     )
