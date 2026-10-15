@@ -5,6 +5,17 @@ and releases use semantic versioning.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-15
+
+### Fixed
+
+- Classify exhausted Codex subscription usage as a typed quota error and
+  speak a clear localized message through Home Assistant Assist.
+- Handle nested App Server error events and failed turns without forwarding
+  untrusted provider details; respect retryable provider errors.
+- Release failed conversation threads and add regression coverage.
+
+
 ## [0.8.0] - 2026-10-12
 
 ### Added
